@@ -4,8 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "tsc -b && node ./dist/index.js"
-  },
+    "build": "tsc -b",
+    "dev": "tsc -b && node ./dist/index.js",
+    "dev:api": "tsc -b && node ./dist/api.js",
+    "dev:ws": "tsc -b && node ./dist/broadcaster.js"
+  }
+,
   "keywords": [],
   "author": "",
   "license": "ISC",

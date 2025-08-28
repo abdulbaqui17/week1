@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { Client } from "pg";
-//ts-ignore
+
 import format from "pg-format";
 import dotenv from "dotenv";
 import { createClient } from "redis";
