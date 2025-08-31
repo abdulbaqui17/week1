@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { Pool } from 'pg';
+import { Pool } from '../node_modules/@types/pg/index.js';
 
 const PORT = parseInt(process.env.API_PORT ?? '8081', 10);
 const DATABASE_URL =
