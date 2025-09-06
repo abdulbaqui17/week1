@@ -5,6 +5,7 @@ import OrderPanel from './components/OrderPanel';
 import PositionsPanel from './components/PositionsPanel';
 import ChartPanel from './components/ChartPanel';
 import { useEffect } from 'react';
+import { useAlerts } from './lib/alerts';
 import { useAppStore } from './store/app';
 
 export default function App() {
@@ -29,6 +30,10 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [setSymbol, setMode, setVolume, setLeverage, mode, volume]);
+
+  // Hook alerts (assumes global singleton WS if provided through window.__WS__ else none)
+  // Won't alter layout or styling.
+  useAlerts((globalThis as any).__WS__ || null);
 
   return (
   <div className="grid h-screen grid-rows-[auto_1fr] grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_20rem] xl:gap-x-2 bg-slate-950 text-slate-200">

@@ -15,6 +15,8 @@ export type Position = {
   closePrice?: number;
   closedAt?: number; // ms ts
   realizedPnl?: number; // final realized PnL
+  take_profit?: number | null;
+  stop_loss?: number | null;
 };
 
 type AppState = {
@@ -106,10 +108,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (s.volume <= 0) return { ok: false, reason: 'Invalid volume' } as const;
     const notional = tradePrice * s.volume;
     const requiredMargin = notional / s.leverage;
-    if (s.mode === 'MARKET') {
+  if (s.mode === 'MARKET') {
       if (requiredMargin > s.freeMargin) return { ok: false, reason: 'Insufficient margin' } as const;
-      const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN' };
+  const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN', take_profit: (s as any).take_profit ?? null, stop_loss: (s as any).stop_loss ?? null };
       set({ positions: [pos, ...s.positions], usedMargin: s.usedMargin + requiredMargin, freeMargin: s.freeMargin - requiredMargin });
+  try { console.log('[ORDER] store upsert', { id: pos.id, take_profit: pos.take_profit, stop_loss: pos.stop_loss }); } catch {}
       return { ok: true } as const;
     } else { // LIMIT → store pending order (margin not reserved until fill)
       if (s.price == null || s.price <= 0) return { ok: false, reason: 'Invalid limit price' } as const;
@@ -143,6 +146,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       let pending = s.pendingOrders;
       let used = 0;
       let totalPnl = 0;
+      const nowTs = Date.now();
+      // Execute SL/TP for open positions (client-side simulation)
+      newPositions = newPositions.map(p => {
+        if (p.status !== 'OPEN') return p;
+        const last = map[p.symbol] || p.entry;
+        const sl = p.stop_loss;
+        const tp = p.take_profit;
+        const side = p.side; // BUY|SELL
+        const hitTP = tp != null && (side === 'BUY' ? last >= tp : last <= tp);
+        const hitSL = sl != null && (side === 'BUY' ? last <= sl : last >= sl);
+        if (!hitTP && !hitSL) return p;
+        const reason = hitTP ? 'TP' : 'SL'; // TP priority
+        const realized = side === 'BUY' ? (last - p.entry) * p.volume : (p.entry - last) * p.volume;
+        try { console.log(`[SLTP] closed id=${p.id} reason=${reason} at=${last}`); } catch {}
+        return { ...p, status: 'CLOSED', closePrice: last, closedAt: nowTs, realizedPnl: realized };
+      });
       for (const p of newPositions) {
         if (p.status !== 'OPEN') continue;
         const last = map[p.symbol] || p.entry;

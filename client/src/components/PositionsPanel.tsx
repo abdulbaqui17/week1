@@ -58,6 +58,8 @@ export default function PositionsPanel() {
                   <th className="w-[140px]">Volume, lot</th>
                   <th className="w-[160px]">Open price</th>
                   <th className="w-[160px]">Current price</th>
+                  <th className="w-[120px]">TP</th>
+                  <th className="w-[120px]">SL</th>
                   <th className="w-[120px]">P/L, USD</th>
                   <th className="w-[80px] pr-2 text-right" />
                 </tr>
@@ -82,6 +84,20 @@ export default function PositionsPanel() {
                       <td className="w-[140px]"><span className="inline-block border-b border-dashed border-slate-500/60">{volFmt(p.volume)}</span></td>
                       <td className="w-[160px]">{fmt(p.entry)}</td>
                       <td className="w-[160px]">{fmt(last)}</td>
+                      <td className="w-[120px]">
+                        { (p as any).take_profit != null ? (
+                          <span className="inline-flex items-center rounded px-2 py-0.5 text-xs bg-green-500/10 text-green-500">
+                            {fmt((p as any).take_profit)}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="w-[120px]">
+                        { (p as any).stop_loss != null ? (
+                          <span className="inline-flex items-center rounded px-2 py-0.5 text-xs bg-red-500/10 text-red-500">
+                            {fmt((p as any).stop_loss)}
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className={`w-[120px] ${pnlCls}`}>{pnlStr}</td>
                       <td className="w-[80px] pr-2">
                         <div className="flex justify-end">

@@ -14,6 +14,7 @@ import {
   getMMR as liqGetMMR,
 } from './lib/liquidation.js';
 import { createClient } from 'redis';
+import { startSlTpWatcher } from './sl_tp_watcher.js';
 
 const PORT = parseInt(process.env.API_PORT ?? '8081', 10);
 const DATABASE_URL =
@@ -349,6 +350,7 @@ app.post('/api/v1/orders', async (req, res) => {
   try {
     await initDemo();
     const body = req.body ?? {};
+  try { console.log('[ORDER] payload', { symbol: body.symbol, side: body.side, volume: body.volume, tp: body.tp ?? body.take_profit, sl: body.sl ?? body.stop_loss, leverage: body.leverage }); } catch {}
     const rawSymbol = String(body.symbol || '');
     const rawSide = String(body.side || '').toUpperCase();
   const volume = Number(body.volume);
@@ -431,6 +433,8 @@ app.post('/api/v1/orders', async (req, res) => {
       tp: Number.isFinite(tp as number) ? (tp as number) : undefined,
       sl: Number.isFinite(sl as number) ? (sl as number) : undefined,
       status: 'open' as const,
+      take_profit: Number.isFinite(tp as number) ? (tp as number) : undefined,
+      stop_loss: Number.isFinite(sl as number) ? (sl as number) : undefined,
     };
 
     await pushOrder(order);
@@ -443,65 +447,16 @@ app.post('/api/v1/orders', async (req, res) => {
       console.error('[api] publish order error:', e);
     }
 
-    return res.json({ ok: true, order });
+  try { console.log('[ORDER] persisted position', { id: order.id, symbol: order.symbol, take_profit: order.take_profit, stop_loss: order.stop_loss }); } catch {}
+  return res.json({ ok: true, order });
   } catch (e) {
     console.error('[api] /api/v1/orders POST error:', e);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
 
-// --- Auto-close open orders on TP/SL ---
-async function autoClosePass() {
-  try {
-    await initDemo();
-    const orders = await listOrders<any>();
-    let mutated = false;
-    for (let i = 0; i < orders.length; i++) {
-      const o = orders[i];
-      if (!o || String(o.status ?? 'open') !== 'open') continue;
-      const sym = ensureUsdt(String(o.symbol || 'BTCUSDT'));
-      const last = await getLatestPriceForSymbol(sym);
-      if (!Number.isFinite(last as number)) continue;
-      const side = String(o.side || '').toUpperCase();
-      const tp = Number(o.tp);
-      const sl = Number(o.sl);
-      let hit = false;
-      if (side === 'BUY') {
-        if (Number.isFinite(tp) && (last as number) >= tp) hit = true;
-        if (Number.isFinite(sl) && (last as number) <= sl) hit = true;
-      } else if (side === 'SELL') {
-        if (Number.isFinite(tp) && (last as number) <= tp) hit = true;
-        if (Number.isFinite(sl) && (last as number) >= sl) hit = true;
-      }
-      if (!hit) continue;
-
-      // Close this order at current price
-      const entry = Number(o.entry);
-      const vol = Number(o.volume);
-      if (!Number.isFinite(entry) || !Number.isFinite(vol)) continue;
-      const pnl = (side === 'BUY' ? ((last as number) - entry) : (entry - (last as number))) * vol;
-      const bal = await getBalance();
-      await setBalance(bal + pnl);
-      const closedAt = new Date().toISOString();
-      const updated = { ...o, status: 'closed', exit: Number(last), pnl, closedAt, closedBy: 'auto' };
-      orders[i] = updated;
-      mutated = true;
-      try {
-        if (!redis.isOpen) await redis.connect();
-        await redis.publish('orders', JSON.stringify({ event: 'order:closed', order: updated }));
-      } catch {}
-    }
-    if (mutated) {
-  // After applying auto-closes, prune closed orders to latest 5
-  const persisted = pruneClosedOrders(orders, 5);
-  await redis.set(KEY_ORDERS, JSON.stringify(persisted));
-    }
-  } catch (e) {
-    // ignore
-  }
-}
-
-setInterval(autoClosePass, 1000);
+// Start SL/TP watcher (event-driven on trade ticks)
+startSlTpWatcher().catch(e => console.error('[api] sl/tp watcher start error', e));
 
 // --- Simple 1% adverse move liquidation ---
 setInterval(async () => {

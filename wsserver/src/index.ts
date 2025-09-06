@@ -1,4 +1,5 @@
 import { WebSocket, WebSocketServer } from "ws";
+import { startAlertsBridge } from './alerts.js';
 import { createClient } from "redis";
 
 // Allow overriding the port via env (WS_PORT or PORT)
@@ -82,5 +83,6 @@ wss.on("close", () => {
         }
     });
 
-    console.log(`[wsserver] Subscribed to channels: trades, orders`);
+    await startAlertsBridge(wss);
+    console.log(`[wsserver] Subscribed to channels: trades, orders, alerts`);
 })();

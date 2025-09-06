@@ -27,10 +27,17 @@ export default function OrderPanel() {
   const invalid = volume <= 0 || Number.isNaN(tradePrice) || (mode === 'LIMIT' && (price == null || price <= 0)) || required > freeMargin;
   const [tpOpen, setTpOpen] = useState(false);
   const [slOpen, setSlOpen] = useState(false);
+  const [tpVal, setTpVal] = useState<string>('');
+  const [slVal, setSlVal] = useState<string>('');
 
   function submit(chosen: 'BUY' | 'SELL') {
     setSide(chosen);
     if (invalid) return;
+    // Stash TP/SL on store state temporarily (mutating via set)
+    const take_profit = tpVal ? Number(tpVal) : null;
+    const stop_loss = slVal ? Number(slVal) : null;
+  useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
+    try { console.log('[ORDER] payload', { symbol, side: chosen, volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
     const res = placeOrderStore();
     if (!res.ok) {
       // eslint-disable-next-line no-alert
@@ -102,8 +109,8 @@ export default function OrderPanel() {
       </div>
       {(tpOpen || slOpen) && (
         <div className="grid grid-cols-2 gap-2 mb-2">
-          {tpOpen && <input type="number" step="0.01" placeholder="TP price" aria-label="TP price" className="h-9 w-full rounded-md bg-slate-900 border border-slate-700 px-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500" />}
-          {slOpen && <input type="number" step="0.01" placeholder="SL price" aria-label="SL price" className="h-9 w-full rounded-md bg-slate-900 border border-slate-700 px-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500" />}
+          {tpOpen && <input value={tpVal} onChange={e=>setTpVal(e.target.value)} type="number" step="0.01" placeholder="TP price" aria-label="TP price" className="h-9 w-full rounded-md bg-slate-900 border border-slate-700 px-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500" />}
+          {slOpen && <input value={slVal} onChange={e=>setSlVal(e.target.value)} type="number" step="0.01" placeholder="SL price" aria-label="SL price" className="h-9 w-full rounded-md bg-slate-900 border border-slate-700 px-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-slate-500" />}
         </div>
       )}
 
