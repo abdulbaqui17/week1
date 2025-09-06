@@ -3,7 +3,7 @@ import { getLastPrice } from '../lib/ws';
 
 export type Side = 'BUY' | 'SELL';
 export type TF = '1m' | '5m' | '15m';
-export type TSymbol = 'BTCUSD' | 'ETHUSD' | 'SOLUSD';
+export type TSymbol = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT';
 export type Position = {
   id: string;
   symbol: TSymbol;
@@ -35,8 +35,18 @@ type AppState = {
   volume: number;
   leverage: 5 | 10 | 20 | 100;
   positions: Position[];
+  pendingOrders: {
+    id: string;
+    symbol: TSymbol;
+    side: Side;
+    volume: number;
+    leverage: number;
+    price: number; // limit price
+    createdAt: number;
+  }[];
   closePosition(id: string): void;
   updatePosition(id: string, patch: Partial<Position>): void;
+  updateSymbolPrice(sym: TSymbol, price: number): void;
   getLastPrice(sym: TSymbol): number;
   setSymbol(s: TSymbol): void;
   setTf(tf: TF): void;
@@ -51,7 +61,7 @@ type AppState = {
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
-  symbol: 'BTCUSD',
+  symbol: 'BTCUSDT',
   tf: '1m',
   connection: 'disconnected',
   lastPrice: null,
@@ -61,13 +71,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   usedMargin: 0,
   freeMargin: 5000,
   marginLevel: null,
-  lastPriceBySymbol: { BTCUSD: 0, ETHUSD: 0, SOLUSD: 0 },
+  lastPriceBySymbol: { BTCUSDT: 0, ETHUSDT: 0, SOLUSDT: 0 },
   side: 'BUY',
   mode: 'MARKET',
   price: null,
   volume: 0.01,
   leverage: 100,
   positions: [],
+  pendingOrders: [],
   setSymbol(symbol) { set({ symbol }); },
   setTf(tf) { set({ tf }); },
   setSide(side) { set({ side }); },
@@ -76,6 +87,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   setVolume(v) { set({ volume: v }); },
   setLeverage(l) { set({ leverage: l }); },
   markConnection(x) { set({ connection: x }); },
+  updateSymbolPrice(sym: TSymbol, price: number) {
+    set((s) => {
+      const map = { ...s.lastPriceBySymbol, [sym]: price };
+      return { lastPriceBySymbol: map, lastPrice: sym === s.symbol ? price : s.lastPrice };
+    });
+    // Trigger a full recalc so equity/free margin reflect all open positions even when
+    // the active chart symbol differs from the symbol whose price just moved.
+    get().recalc();
+  },
   placeOrder() {
     const s = get();
     const last = getLastPrice(s.symbol) ?? s.price;
@@ -84,10 +104,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (s.volume <= 0) return { ok: false, reason: 'Invalid volume' } as const;
     const notional = tradePrice * s.volume;
     const requiredMargin = notional / s.leverage;
-    if (requiredMargin > s.freeMargin) return { ok: false, reason: 'Insufficient margin' } as const;
-    const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN' };
-    set({ positions: [pos, ...s.positions], usedMargin: s.usedMargin + requiredMargin, freeMargin: s.freeMargin - requiredMargin });
-    return { ok: true } as const;
+    if (s.mode === 'MARKET') {
+      if (requiredMargin > s.freeMargin) return { ok: false, reason: 'Insufficient margin' } as const;
+      const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN' };
+      set({ positions: [pos, ...s.positions], usedMargin: s.usedMargin + requiredMargin, freeMargin: s.freeMargin - requiredMargin });
+      return { ok: true } as const;
+    } else { // LIMIT → store pending order (margin not reserved until fill)
+      if (s.price == null || s.price <= 0) return { ok: false, reason: 'Invalid limit price' } as const;
+      const order = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, leverage: s.leverage, price: s.price, createdAt: Date.now() };
+      set({ pendingOrders: [order, ...s.pendingOrders] });
+      return { ok: true } as const;
+    }
   },
   closePosition(id) {
     const s = get();
@@ -106,36 +133,70 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ positions: get().positions.map(p => p.id === id ? { ...p, ...patch } : p) });
   },
   getLastPrice(sym) { return get().lastPriceBySymbol[sym]; },
-  recalc(pulsePrice?: number) {
-    const s = get();
-    const map = { ...s.lastPriceBySymbol };
-    if (typeof pulsePrice === 'number') map[s.symbol] = pulsePrice;
-    let totalPnl = 0;
-    let used = 0;
-    for (const p of s.positions) {
-      if (p.status !== 'OPEN') continue;
-      const last = map[p.symbol] || p.entry;
-      const pnl = p.side === 'BUY' ? (last - p.entry) * p.volume : (p.entry - last) * p.volume;
-      totalPnl += pnl;
-      used += (p.entry * p.volume) / p.leverage; // entry-based margin
-    }
-    const equity = s.balance + totalPnl;
-    const free = equity - used;
-    const marginLevel = used > 0 ? (equity / used) * 100 : null;
-    set({ lastPrice: pulsePrice ?? s.lastPrice, lastPriceBySymbol: map, equity, usedMargin: used, freeMargin: free, marginLevel });
+  recalc(_pulsePrice?: number) {
+    set((s) => {
+      const map = { ...s.lastPriceBySymbol };
+      // Fill limit orders for ANY symbol whose trigger is met.
+      let newPositions = s.positions;
+      let pending = s.pendingOrders;
+      let used = 0;
+      let totalPnl = 0;
+      for (const p of newPositions) {
+        if (p.status !== 'OPEN') continue;
+        const last = map[p.symbol] || p.entry;
+        const pnl = p.side === 'BUY' ? (last - p.entry) * p.volume : (p.entry - last) * p.volume;
+        totalPnl += pnl;
+        used += (p.entry * p.volume) / p.leverage;
+      }
+      if (pending.length) {
+        const remaining: typeof pending = [];
+        const filled: Position[] = [];
+        for (const o of pending) {
+          const lastPx = map[o.symbol];
+          if (typeof lastPx !== 'number') { remaining.push(o); continue; }
+          const trigger = o.side === 'BUY' ? lastPx <= o.price : lastPx >= o.price;
+          if (trigger) {
+            const entry = o.price;
+            const notional = entry * o.volume;
+            const requiredMargin = notional / o.leverage;
+            const equityTemp = s.balance + totalPnl;
+            const freeTemp = equityTemp - used;
+            if (requiredMargin <= freeTemp) {
+              const pos: Position = { id: crypto.randomUUID(), symbol: o.symbol, side: o.side, volume: o.volume, entry, leverage: o.leverage, status: 'OPEN' };
+              filled.push(pos);
+              used += requiredMargin;
+            } else {
+              remaining.push(o); // keep if not enough margin
+            }
+          } else {
+            remaining.push(o);
+          }
+        }
+        if (filled.length) newPositions = [...filled, ...newPositions];
+        pending = remaining;
+      }
+      const equity = s.balance + totalPnl;
+      const free = equity - used;
+      const marginLevel = used > 0 ? (equity / used) * 100 : null;
+      return { lastPrice: map[s.symbol], lastPriceBySymbol: map, equity, usedMargin: used, freeMargin: free, marginLevel, positions: newPositions, pendingOrders: pending };
+    });
   },
 }));
 
 // --- Basic persistence (browser only) ---
 if (typeof window !== 'undefined') {
   const PERSIST_KEY = 'app-persist-v1';
+  const VALID_SYMBOLS: TSymbol[] = ['BTCUSDT','ETHUSDT','SOLUSDT'];
+  const LEGACY_MAP: Record<string, TSymbol> = { BTCUSD: 'BTCUSDT', ETHUSD: 'ETHUSDT', SOLUSD: 'SOLUSDT' };
   // Hydrate once
   try {
     const raw = localStorage.getItem(PERSIST_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        const { positions, balance, equity, usedMargin, freeMargin, symbol } = parsed;
+        let { positions, balance, equity, usedMargin, freeMargin, symbol } = parsed;
+        if (symbol && LEGACY_MAP[symbol]) symbol = LEGACY_MAP[symbol];
+        if (!VALID_SYMBOLS.includes(symbol)) symbol = undefined;
         useAppStore.setState((s) => ({
           ...s,
           positions: Array.isArray(positions) ? positions : s.positions,
@@ -143,7 +204,7 @@ if (typeof window !== 'undefined') {
           equity: typeof equity === 'number' ? equity : s.equity,
           usedMargin: typeof usedMargin === 'number' ? usedMargin : s.usedMargin,
           freeMargin: typeof freeMargin === 'number' ? freeMargin : s.freeMargin,
-          symbol: symbol || s.symbol,
+          symbol: (symbol as TSymbol) || s.symbol,
         }));
       }
     }

@@ -1,4 +1,4 @@
-export type SymbolKey = 'BTCUSD' | 'ETHUSD' | 'SOLUSD';
+export type SymbolKey = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT';
 export type Timeframe = '1m' | '5m' | '15m';
 export type Side = 'BUY' | 'SELL';
 export type Mode = 'MARKET' | 'LIMIT';
@@ -16,7 +16,7 @@ export type Position = {
   status: PositionStatus;
 };
 export type Instrument = {
-  key: 'BTCUSD' | 'ETHUSD' | 'SOLUSD';
+  key: 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT';
   label: string;
   display: string; // e.g., 'BTC / USD'
 };

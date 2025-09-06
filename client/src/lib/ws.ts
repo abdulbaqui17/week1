@@ -2,7 +2,7 @@ import { BehaviorSubject } from 'rxjs';
 import type { SymbolKey } from '../types/market';
 
 // Public symbol type alias per contract
-export type TSymbol = 'BTCUSD' | 'ETHUSD' | 'SOLUSD';
+export type TSymbol = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT';
 
 // Tick contract (ts in ms)
 export type Tick = { symbol: TSymbol; price: number; ts: number };
@@ -35,9 +35,9 @@ function randomNudge(base: number): number {
 }
 
 const BASE_PRICES: Record<TSymbol, number> = {
-  BTCUSD: 30000,
-  ETHUSD: 2000,
-  SOLUSD: 100,
+  BTCUSDT: 30000,
+  ETHUSDT: 2000,
+  SOLUSDT: 100,
 };
 
 /** Starts a price simulator for one symbol */

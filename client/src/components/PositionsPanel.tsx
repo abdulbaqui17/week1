@@ -1,16 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useAppStore, type Position } from '../store/app';
 import { XCircle } from 'lucide-react';
-
-const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const volFmt = (v: number) => v.toFixed(2);
+import { formatPrice as fmt, formatVolumeLots as volFmt, formatSigned } from '../lib/format';
 
 function SymbolIcon({ symbol }: { symbol: Position['symbol'] }) {
-  if (symbol === 'BTCUSD') return <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500 text-[10px] font-bold">₿</span>;
-  if (symbol === 'ETHUSD') return <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-purple-600 text-[9px] font-bold">◇</span>;
+  if (symbol === 'BTCUSDT') return <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-orange-500 text-[10px] font-bold">₿</span>;
+  if (symbol === 'ETHUSDT') return <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-purple-600 text-[9px] font-bold">◇</span>;
   return <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-teal-500 text-[9px] font-bold">▌</span>;
 }
-function symbolLabel(symbol: Position['symbol']) { return symbol.replace('USD',''); }
+function symbolLabel(symbol: Position['symbol']) { return symbol.replace('USDT',''); }
 
 export default function PositionsPanel() {
   const positions = useAppStore(s => s.positions);
@@ -69,6 +67,7 @@ export default function PositionsPanel() {
                   const last = lastPriceBy[p.symbol] ?? p.entry;
                   const pnl = (p.side === 'BUY' ? (last - p.entry) : (p.entry - last)) * p.volume;
                   const pnlCls = pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-slate-300';
+                  const pnlStr = formatSigned(pnl);
                   return (
                     <tr key={p.id} className="h-12 text-sm text-slate-200 hover:bg-slate-800/30 transition border-t border-slate-800 first:border-t-0">
                       <td className="pl-4 w-[140px]">
@@ -83,7 +82,7 @@ export default function PositionsPanel() {
                       <td className="w-[140px]"><span className="inline-block border-b border-dashed border-slate-500/60">{volFmt(p.volume)}</span></td>
                       <td className="w-[160px]">{fmt(p.entry)}</td>
                       <td className="w-[160px]">{fmt(last)}</td>
-                      <td className={`w-[120px] ${pnlCls}`}>{fmt(pnl)}</td>
+                      <td className={`w-[120px] ${pnlCls}`}>{pnlStr}</td>
                       <td className="w-[80px] pr-2">
                         <div className="flex justify-end">
                           <button aria-label="Close" className="p-1 text-slate-400 hover:text-rose-400" onClick={() => closePosition(p.id)}>
@@ -125,7 +124,7 @@ export default function PositionsPanel() {
                       <td className="w-[140px]"><span className="inline-block border-b border-dashed border-slate-500/60">{volFmt(p.volume)}</span></td>
                       <td className="w-[160px]">{fmt(p.entry)}</td>
                       <td className="w-[160px]">{fmt(p.closePrice ?? p.entry)}</td>
-                      <td className={`w-[120px] ${pnlCls}`}>{fmt(p.realizedPnl ?? 0)}</td>
+                      <td className={`w-[120px] ${pnlCls}`}>{formatSigned(p.realizedPnl ?? 0)}</td>
                       <td className="w-[200px]">{p.closedAt ? new Date(p.closedAt).toLocaleString() : '—'}</td>
                     </tr>
                   );

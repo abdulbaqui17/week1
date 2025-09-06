@@ -1,4 +1,5 @@
 import Header from './components/Header';
+import DebugOverlay from './components/DebugOverlay';
 import Sidebar from './components/Sidebar';
 import OrderPanel from './components/OrderPanel';
 import PositionsPanel from './components/PositionsPanel';
@@ -17,9 +18,9 @@ export default function App() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target && (e.target as HTMLElement).tagName === 'INPUT') return;
-      if (e.key === '1') setSymbol('BTCUSD');
-      if (e.key === '2') setSymbol('ETHUSD');
-      if (e.key === '3') setSymbol('SOLUSD');
+  if (e.key === '1') setSymbol('BTCUSDT');
+  if (e.key === '2') setSymbol('ETHUSDT');
+  if (e.key === '3') setSymbol('SOLUSDT');
   if (e.key.toLowerCase() === 'm') setMode(mode === 'MARKET' ? 'LIMIT' : 'MARKET');
   if (e.key === '+') setVolume(Number((volume + 0.01).toFixed(2)));
   if (e.key === '-') setVolume(Math.max(0, Number((volume - 0.01).toFixed(2))));
@@ -57,6 +58,7 @@ export default function App() {
   <section className="row-[2] xl:col-[3] hidden xl:block bg-slate-950 overflow-y-auto">
         <OrderPanel />
       </section>
+      <DebugOverlay />
     </div>
   );
 }

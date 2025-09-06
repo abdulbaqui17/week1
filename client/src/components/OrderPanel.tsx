@@ -18,6 +18,7 @@ export default function OrderPanel() {
   const equity = useAppStore(s => s.equity);
   const lastPriceBySymbol = useAppStore(s => s.lastPriceBySymbol);
   const placeOrderStore = useAppStore(s => s.placeOrder);
+  const pendingOrders = useAppStore(s => s.pendingOrders).filter(o => o.symbol === symbol);
 
   const lastPrice = lastPriceBySymbol[symbol] ?? 0;
   const tradePrice = mode === 'MARKET' ? lastPrice : (price ?? lastPrice);
@@ -64,18 +65,21 @@ export default function OrderPanel() {
 
       {/* Mode & Price */}
       <div className="mb-3">
-        <label className="text-xs text-slate-400 block mb-1">Price</label>
+        <label htmlFor="order-price" className="text-xs text-slate-400 block mb-1">Price</label>
         <div className="flex gap-2">
           <div className="flex overflow-hidden rounded-md border border-slate-700">
             {(['MARKET','LIMIT'] as const).map(m => (
               <button
                 key={m}
+                type="button"
                 onClick={()=> setMode(m)}
                 className={`px-3 h-9 text-sm transition-colors ${mode===m ? 'bg-slate-800 text-slate-200' : 'bg-slate-900 text-slate-400 hover:bg-slate-800/60'}`}
               >{m}</button>
             ))}
           </div>
           <input
+            id="order-price"
+            name="price"
             type="number"
             step="0.01"
             placeholder={mode==='MARKET' ? 'Market' : 'Limit price'}
@@ -86,12 +90,15 @@ export default function OrderPanel() {
             className="h-9 w-full rounded-md bg-slate-900 border border-slate-700 px-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:opacity-60"
           />
         </div>
+        {mode==='LIMIT' && <div className="mt-1 text-[11px] text-slate-500">Order will execute automatically when market {side==='BUY' ? '≤' : '≥'} your limit.</div>}
       </div>
 
       {/* Volume */}
       <div className="mb-3">
-        <label className="text-xs text-slate-400 block mb-1">Volume</label>
+        <label htmlFor="order-volume" className="text-xs text-slate-400 block mb-1">Volume</label>
         <input
+          id="order-volume"
+          name="volume"
           type="number"
           step="0.01"
           min="0"
@@ -149,6 +156,19 @@ export default function OrderPanel() {
   <div className="text-2xl font-semibold">{effective.toFixed(2)} USD</div>
 	<div className="text-xs text-slate-500 mt-1">Posted (locked): ${posted.toFixed(2)} | Effective: ${effective.toFixed(2)}</div>
   <div className="text-xs text-slate-500 mt-2">Equity: ${equity.toFixed(2)} | Used: ${usedMargin.toFixed(2)} | Free: ${freeMargin.toFixed(2)}</div>
+        {pendingOrders.length > 0 && (
+          <div className="mt-3 text-xs text-slate-400">
+            <div className="font-semibold text-slate-300 mb-1">Pending Limit Orders</div>
+            <ul className="space-y-1 max-h-28 overflow-auto pr-1">
+              {pendingOrders.map(o => (
+                <li key={o.id} className="flex justify-between text-[11px] bg-slate-800/40 rounded px-2 py-1">
+                  <span>{o.side} {o.volume} @ {o.price}</span>
+                  <span className="text-slate-500">{o.createdAt ? new Date(o.createdAt).toLocaleTimeString() : ''}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </aside>
   );

@@ -10,10 +10,10 @@ export default function Header() {
   const freeMargin = useAppStore((s) => s.freeMargin);
   const usedMargin = useAppStore((s) => s.usedMargin);
   const marginLevel = useAppStore((s) => s.marginLevel);
-  const tabs: { key: 'BTCUSD' | 'ETHUSD' | 'SOLUSD'; label: 'BTC' | 'ETH' | 'SOL' }[] = [
-    { key: 'BTCUSD', label: 'BTC' },
-    { key: 'ETHUSD', label: 'ETH' },
-    { key: 'SOLUSD', label: 'SOL' },
+  const tabs: { key: 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT'; label: 'BTC' | 'ETH' | 'SOL' }[] = [
+    { key: 'BTCUSDT', label: 'BTC' },
+    { key: 'ETHUSDT', label: 'ETH' },
+    { key: 'SOLUSDT', label: 'SOL' },
   ];
 
   return (

@@ -1,11 +1,11 @@
 import { useAppStore } from '../store/app';
 
-type Row = { name: string; ticker: 'BTCUSD' | 'ETHUSD' | 'SOLUSD' };
+type Row = { name: string; ticker: 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT' };
 
 const ROWS: Row[] = [
-  { name: 'BTC/USD', ticker: 'BTCUSD' },
-  { name: 'ETH/USD', ticker: 'ETHUSD' },
-  { name: 'SOL/USD', ticker: 'SOLUSD' },
+  { name: 'BTC/USDT', ticker: 'BTCUSDT' },
+  { name: 'ETH/USDT', ticker: 'ETHUSDT' },
+  { name: 'SOL/USDT', ticker: 'SOLUSDT' },
 ];
 
 export default function Sidebar() {
