@@ -19,7 +19,12 @@ export default function PositionsPanel() {
   const [tab, setTab] = useState<'OPEN' | 'CLOSED'>('OPEN');
 
   const openPositions = useMemo(() => positions.filter(p => p.status === 'OPEN'), [positions]);
-  const closedPositions = useMemo(() => positions.filter(p => p.status === 'CLOSED'), [positions]);
+  const closedPositions = useMemo(() => (
+    positions
+      .filter(p => p.status === 'CLOSED')
+      .sort((a,b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
+      .slice(0,4)
+  ), [positions]);
   const shown = tab === 'OPEN' ? openPositions : closedPositions;
 
   return (

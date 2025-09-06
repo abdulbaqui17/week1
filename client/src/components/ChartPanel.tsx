@@ -219,7 +219,7 @@ export default function ChartPanel() {
 
   // UI
   return (
-    <div className="flex-1 p-3">
+    <div className="p-3">
       {/* Timeframe pills */}
       <div className="mb-2 flex items-center gap-2">
     {(['1m','5m','15m'] as const).map(k => {
@@ -242,7 +242,7 @@ export default function ChartPanel() {
             No data yet — Waiting for live trades…
           </div>
         )}
-        <div ref={containerRef} className="h-[520px] w-full rounded-lg border border-slate-800 bg-slate-900" />
+  <div ref={containerRef} className="h-[360px] w-full rounded-lg border border-slate-800 bg-slate-900" />
       </div>
     </div>
   );

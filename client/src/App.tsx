@@ -1,8 +1,8 @@
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
-import ChartPanel from './components/ChartPanel';
 import OrderPanel from './components/OrderPanel';
 import PositionsPanel from './components/PositionsPanel';
+import ChartPanel from './components/ChartPanel';
 import { useEffect } from 'react';
 import { useAppStore } from './store/app';
 
@@ -30,16 +30,33 @@ export default function App() {
   }, [setSymbol, setMode, setVolume, setLeverage, mode, volume]);
 
   return (
-    <div className="flex flex-col h-screen">
-      <Header />
-      <div className="flex flex-1">
+  <div className="grid h-screen grid-rows-[auto_1fr] grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_22rem] xl:gap-x-2 bg-slate-950 text-slate-200">
+      {/* Header spans all columns */}
+      <header className="row-[1] col-span-full h-12 border-b border-slate-800 bg-slate-950 flex items-center">
+        <Header />
+      </header>
+
+      {/* Sidebar fixed (hidden below xl) */}
+      <aside className="row-[2] col-[1] hidden xl:block border-r border-slate-800 bg-slate-950 overflow-y-auto">
         <Sidebar />
-        <div className="flex-1 flex flex-col p-3">
-          <ChartPanel />
-          <PositionsPanel />
+      </aside>
+
+      {/* Main center area */}
+      <main className="row-[2] xl:col-[2] col-span-full min-w-0 overflow-hidden flex flex-col">
+        {/* Chart (fixed height inside) */}
+        <ChartPanel />
+        {/* Scrollable positions area fills remaining space */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-3">
+          <div className="max-w-[960px] mx-auto">
+            <PositionsPanel />
+          </div>
         </div>
+      </main>
+
+      {/* Order panel fixed width on right (hidden below xl) */}
+  <section className="row-[2] xl:col-[3] hidden xl:block bg-slate-950 overflow-y-auto">
         <OrderPanel />
-      </div>
+      </section>
     </div>
   );
 }
