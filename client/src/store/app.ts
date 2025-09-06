@@ -28,6 +28,7 @@ type AppState = {
   usedMargin: number;
   freeMargin: number;
   marginLevel: number | null;
+  pnlTotal: number; // aggregated unrealized PnL
   lastPriceBySymbol: Record<TSymbol, number>;
   side: Side;
   mode: 'MARKET' | 'LIMIT';
@@ -71,6 +72,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   usedMargin: 0,
   freeMargin: 5000,
   marginLevel: null,
+  pnlTotal: 0,
   lastPriceBySymbol: { BTCUSDT: 0, ETHUSDT: 0, SOLUSDT: 0 },
   side: 'BUY',
   mode: 'MARKET',
@@ -146,7 +148,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         const last = map[p.symbol] || p.entry;
         const pnl = p.side === 'BUY' ? (last - p.entry) * p.volume : (p.entry - last) * p.volume;
         totalPnl += pnl;
-        used += (p.entry * p.volume) / p.leverage;
+        // Use current price for margin requirement per spec
+        used += (last * p.volume) / p.leverage;
       }
       if (pending.length) {
         const remaining: typeof pending = [];
@@ -175,10 +178,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (filled.length) newPositions = [...filled, ...newPositions];
         pending = remaining;
       }
-      const equity = s.balance + totalPnl;
-      const free = equity - used;
-      const marginLevel = used > 0 ? (equity / used) * 100 : null;
-      return { lastPrice: map[s.symbol], lastPriceBySymbol: map, equity, usedMargin: used, freeMargin: free, marginLevel, positions: newPositions, pendingOrders: pending };
+  const equity = s.balance + totalPnl;
+  const free = equity - used;
+  const marginLevel = used > 0 ? (equity / used) * 100 : null;
+  return { lastPrice: map[s.symbol], lastPriceBySymbol: map, equity, usedMargin: used, freeMargin: free, marginLevel, positions: newPositions, pendingOrders: pending, pnlTotal: totalPnl };
     });
   },
 }));

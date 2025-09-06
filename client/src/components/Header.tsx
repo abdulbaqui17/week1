@@ -10,6 +10,7 @@ export default function Header() {
   const freeMargin = useAppStore((s) => s.freeMargin);
   const usedMargin = useAppStore((s) => s.usedMargin);
   const marginLevel = useAppStore((s) => s.marginLevel);
+  const pnlTotal = useAppStore((s) => s.pnlTotal);
   const tabs: { key: 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT'; label: 'BTC' | 'ETH' | 'SOL' }[] = [
     { key: 'BTCUSDT', label: 'BTC' },
     { key: 'ETHUSDT', label: 'ETH' },
@@ -40,10 +41,10 @@ export default function Header() {
       {/* Right: badges */}
       <div className="flex items-center gap-2">
         <Badge>Demo / Standard</Badge>
-        <Badge>Equity {equity.toFixed(2)}</Badge>
-        <Badge>Free {freeMargin.toFixed(2)}</Badge>
-        <Badge>Used {usedMargin.toFixed(2)}</Badge>
-        <Badge>Level {marginLevel != null ? marginLevel.toFixed(2)+'%' : '—'}</Badge>
+  <Badge className={pnlTotal > 0 ? 'bg-emerald-900/30 border-emerald-600 text-emerald-300' : pnlTotal < 0 ? 'bg-rose-900/30 border-rose-600 text-rose-300' : ''}>Equity {equity.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</Badge>
+  <Badge>Free {freeMargin.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</Badge>
+  <Badge>Used {usedMargin.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</Badge>
+  <Badge>Level {marginLevel != null ? marginLevel.toFixed(2)+'%' : '—'}</Badge>
   {(() => {
           const now = Date.now();
           const fresh = lastTickTs && now - lastTickTs < 5000; // 5s freshness window

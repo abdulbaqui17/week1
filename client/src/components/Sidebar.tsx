@@ -16,7 +16,8 @@ export default function Sidebar() {
   const usedMargin = useAppStore((s) => s.usedMargin);
   const marginLevel = useAppStore((s) => s.marginLevel);
   const leverage = useAppStore((s) => s.leverage);
-  const lastPrice = useAppStore((s) => s.lastPrice);
+  const lastPriceBy = useAppStore((s) => s.lastPriceBySymbol);
+  const price = lastPriceBy[symbol] || 0;
 
   return (
     <aside className="w-72 border-r border-slate-800 bg-slate-950 p-3 flex flex-col">
@@ -52,9 +53,9 @@ export default function Sidebar() {
       {/* Stats block */}
       <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-3 space-y-1 text-xs text-slate-400">
         <div className="flex items-center justify-between"><span className="text-slate-300">Equity</span><span className="text-slate-400">{equity.toFixed(2)}</span></div>
-        <div className="flex items-center justify-between"><span className="text-slate-300">Can buy 1 BTC (no lev)</span><span className="text-slate-500">{lastPrice ? (equity >= lastPrice ? 'Yes' : 'No') : '—'}</span></div>
-        <div className="flex items-center justify-between"><span className="text-slate-300">BTC no leverage</span><span className="text-slate-500">{lastPrice ? (Math.floor((equity / lastPrice) * 1000) / 1000).toFixed(3) : '—'}</span></div>
-        <div className="flex items-center justify-between"><span className="text-slate-300">BTC with leverage</span><span className="text-slate-500">{lastPrice ? (Math.floor(((equity * leverage) / lastPrice) * 1000) / 1000).toFixed(3) : '—'}</span></div>
+        <div className="flex items-center justify-between"><span className="text-slate-300">Can buy 1 {symbol.replace('USDT','')} (no lev)</span><span className="text-slate-500">{price ? (equity >= price ? 'Yes' : 'No') : '—'}</span></div>
+        <div className="flex items-center justify-between"><span className="text-slate-300">{symbol.replace('USDT','')} no leverage</span><span className="text-slate-500">{price ? (Math.floor((equity / price) * 1000) / 1000).toFixed(3) : '—'}</span></div>
+        <div className="flex items-center justify-between"><span className="text-slate-300">{symbol.replace('USDT','')} with leverage</span><span className="text-slate-500">{price ? (Math.floor(((equity * leverage) / price) * 1000) / 1000).toFixed(3) : '—'}</span></div>
         <div className="flex items-center justify-between"><span className="text-slate-300">Account Margin</span><span className="text-slate-400">{usedMargin.toFixed(2)}</span></div>
         <div className="flex items-center justify-between"><span className="text-slate-300">Free Margin</span><span className="text-slate-400">{freeMargin.toFixed(2)}</span></div>
         <div className="flex items-center justify-between"><span className="text-slate-300">Used Margin</span><span className="text-slate-400">{usedMargin.toFixed(2)}</span></div>
