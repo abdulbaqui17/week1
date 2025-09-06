@@ -31,7 +31,7 @@ export default function App() {
   }, [setSymbol, setMode, setVolume, setLeverage, mode, volume]);
 
   return (
-  <div className="grid h-screen grid-rows-[auto_1fr] grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_22rem] xl:gap-x-2 bg-slate-950 text-slate-200">
+  <div className="grid h-screen grid-rows-[auto_1fr] grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_20rem] xl:gap-x-2 bg-slate-950 text-slate-200">
       {/* Header spans all columns */}
       <header className="row-[1] col-span-full h-12 border-b border-slate-800 bg-slate-950 flex items-center">
         <Header />
@@ -55,7 +55,7 @@ export default function App() {
       </main>
 
       {/* Order panel fixed width on right (hidden below xl) */}
-  <section className="row-[2] xl:col-[3] hidden xl:block bg-slate-950 overflow-y-auto">
+  <section className="row-[2] xl:col-[3] hidden xl:block bg-slate-950 ">
         <OrderPanel />
       </section>
       <DebugOverlay />

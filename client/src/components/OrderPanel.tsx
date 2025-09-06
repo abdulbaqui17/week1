@@ -39,7 +39,7 @@ export default function OrderPanel() {
   }
 
   return (
-  <aside className="w-[17rem] p-3 border-l border-slate-800 bg-slate-950 flex flex-col text-[13px] leading-snug">
+  <aside className="w-[20rem] p-3 border-l border-slate-800 bg-slate-950 flex flex-col text-[13px] leading-snug">
       {/* Title */}
       <div className="text-base font-semibold mb-2 tracking-tight">{symbol.replace('USD','')}</div>
 
