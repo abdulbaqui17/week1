@@ -55,7 +55,7 @@ export default function PositionsPanel() {
                 <tr className="h-9">
                   <th className="pl-4 w-[140px]">Symbol</th>
                   <th className="w-[100px]">Type</th>
-                  <th className="w-[140px]">Volume, lot</th>
+                  <th className="w-[140px]">Volume</th>
                   <th className="w-[160px]">Open price</th>
                   <th className="w-[160px]">Current price</th>
                   <th className="w-[120px]">TP</th>
