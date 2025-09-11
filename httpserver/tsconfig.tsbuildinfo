@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/engine/margin.ts","./src/engine/simplemargin.ts","./src/lib/liquidation.ts","./src/lib/money.ts","./src/lib/risk.ts"],"version":"5.9.2"}
+{"root":["./src/index.ts","./src/sl_tp_watcher.ts","./src/engine/margin.ts","./src/engine/simplemargin.ts","./src/lib/liquidation.ts","./src/lib/money.ts","./src/lib/risk.ts"],"version":"5.9.2"}

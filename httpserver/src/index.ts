@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
-import { fmtUSD } from './lib/money.js';
+import { fmtUSD, MONEY_SCALE, scaleMoney, formatMoneyScaled } from './lib/money.js';
 import { validateOrderRisk } from './lib/risk.js';
 import type { Account as MAccount, Position as MPosition, Side as MSide } from './engine/margin.js';
 import { onPriceTick as mOnPriceTick } from './engine/margin.js';
@@ -373,8 +373,8 @@ app.post('/api/v1/orders', async (req, res) => {
       return res.status(400).json({ error: 'invalid_leverage', allowed: [1,5,10,20,25,50,100] });
     }
 
-    // Lookup latest price (Redis price:last:<SYMBOL> with PG fallback)
-    const price = await getLatestPriceForSymbol(symbol);
+  // Lookup latest price (Redis price:last:<SYMBOL> with PG fallback)
+  const price = await getLatestPriceForSymbol(symbol);
     if (!Number.isFinite(price as number)) {
       return res.status(503).json({ error: 'price_unavailable', symbol });
     }
@@ -398,6 +398,37 @@ app.post('/api/v1/orders', async (req, res) => {
       const status = r.code === 'INSUFFICIENT_MARGIN' ? 402 : 400;
       return res.status(status).json(risk);
     }
+
+    // --- RISK CHECKS (pre-trade) -------------------------------------------------
+    // Simplified: we treat all stored open orders as positions for gross notional & used margin.
+    const existing = await listOrders<any>();
+    let grossNotional = 0; // sum abs(entry * volume) of open
+    for (const o of existing) {
+      if (!o || String(o.status ?? 'open') !== 'open') continue;
+      const e = Number(o.entry); const v = Number(o.volume);
+      if (!Number.isFinite(e) || !Number.isFinite(v)) continue;
+      grossNotional += Math.abs(e * v);
+    }
+    const notionalNew = Number(price) * volume; // float math (demo environment)
+    const equityNum = (await computeAccountSnapshot()).equity; // already fmtUSD -> number
+    const equity = Number(equityNum);
+    if (!(equity > 0)) {
+      console.log('[RISK] reject INSUFFICIENT_EQUITY', { symbol, side: rawSide, volume, price });
+      return res.status(400).json({ error: 'INSUFFICIENT_EQUITY' });
+    }
+    // Using prior calculations below for margin after we know leverage / usedMargin candidate
+    // We'll approximate free margin from snapshot again (balance + unrealized - used)
+    const snapshot2 = await computeAccountSnapshot();
+    const free = Number(snapshot2.freeMargin);
+    const postedPreview = notionalNew / lev; // required margin for this order
+    const feeReserve = 0; // no fee helper yet; placeholder
+    if (postedPreview + feeReserve > free) {
+      const payload = { required: Number((postedPreview + feeReserve).toFixed(2)), free: Number(free.toFixed(2)) };
+      console.log('[RISK] reject INSUFFICIENT_FREE_MARGIN', { symbol, side: rawSide, volume, price, lev, ...payload });
+      return res.status(400).json({ error: 'INSUFFICIENT_FREE_MARGIN', ...payload });
+    }
+  // Removed effective leverage cap check to allow higher exposures (risk handled via liquidation logic elsewhere)
+    // -----------------------------------------------------------------------------
 
     // Lock margin and persist position-like order
     let vol = volume; // mutable for 100x rule
@@ -585,16 +616,23 @@ app.listen(PORT, () => {
   console.log(`[api] listening on :${PORT}`);
 });
 
-// Initialize demo state on startup
-initDemo()
-  .then(async () => {
+// Initialize demo state with scaled balance
+(async () => {
+  try {
+    await initDemo();
+    const DEMO_BALANCE_USD = Number(process.env.DEMO_BALANCE_USD ?? '5000');
+    if (!Number.isFinite(DEMO_BALANCE_USD) || DEMO_BALANCE_USD < 0) throw new Error('Invalid DEMO_BALANCE_USD');
+    const balanceScaled = scaleMoney(DEMO_BALANCE_USD);
+    if (Number(balanceScaled) < MONEY_SCALE) console.warn('[seed] suspiciously small balance');
+    // Persist unscaled numeric (legacy) while keeping scaled in log (demo storage uses simple numeric set)
+    await setBalance(Number((Number(balanceScaled) / MONEY_SCALE).toFixed(2)));
     const [bal, lev, orders] = await Promise.all([
       getBalance(),
       getLeverage(),
       listOrders(),
     ]);
-    console.log(`[api] demo seeded: balance=${bal}, leverage=${lev}, orders=${orders.length}`);
-  })
-  .catch((e) => {
+    console.log(`[api] demo seeded: balance=${formatMoneyScaled(balanceScaled)}, leverage=${lev}, orders=${orders.length}`);
+  } catch (e) {
     console.error('[api] demo init error:', e);
-  });
+  }
+})();

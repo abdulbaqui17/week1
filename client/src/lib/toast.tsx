@@ -37,7 +37,7 @@ if (typeof window !== 'undefined') {
 	let host = document.getElementById(id);
 	if (!host) { host = document.createElement('div'); host.id = id; document.body.appendChild(host); }
 	// Lazy hydrate
-	import('react-dom').then(r => { const { createRoot } = r as any; createRoot(host!).render(React.createElement(ToastViewport)); });
+	import('react-dom/client').then(r => { const { createRoot } = r as any; if (typeof createRoot === 'function') { createRoot(host!).render(React.createElement(ToastViewport)); } });
 }
 
 export default ToastViewport;

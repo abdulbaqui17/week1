@@ -36,7 +36,7 @@ type AppState = {
   mode: 'MARKET' | 'LIMIT';
   price: number | null;
   volume: number;
-  leverage: 5 | 10 | 20 | 100;
+  leverage: number; // 1-100 slider supported
   positions: Position[];
   pendingOrders: {
     id: string;
@@ -57,7 +57,7 @@ type AppState = {
   setMode(m: 'MARKET' | 'LIMIT'): void;
   setPrice(p: number | null): void;
   setVolume(v: number): void;
-  setLeverage(l: 5 | 10 | 20 | 100): void;
+  setLeverage(l: number): void;
   placeOrder(): { ok: true } | { ok: false; reason: string };
   markConnection(x: AppState['connection']): void;
   recalc(pulsePrice?: number): void;
@@ -80,7 +80,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   mode: 'MARKET',
   price: null,
   volume: 0.01,
-  leverage: 100,
+  leverage: 1,
   positions: [],
   pendingOrders: [],
   setSymbol(symbol) { set({ symbol }); },
@@ -89,7 +89,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMode(m) { set({ mode: m, price: m === 'MARKET' ? null : get().price }); },
   setPrice(p) { set({ price: p }); },
   setVolume(v) { set({ volume: v }); },
-  setLeverage(l) { set({ leverage: l }); },
+  setLeverage(l) { if (l < 1) l = 1; if (l > 100) l = 100; set({ leverage: l }); },
   markConnection(x) { set({ connection: x }); },
   updateSymbolPrice(sym: TSymbol, price: number) {
     set((s) => {

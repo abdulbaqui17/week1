@@ -2,7 +2,7 @@ import { fmtUSD } from './money.js';
 
 export const RISK = {
   ACCOUNT_MAX_LEVERAGE: 100,    // exchange/account-configured max
-  MAX_EFFECTIVE_LEVERAGE: 10,   // chosen cap for safety
+  // MAX_EFFECTIVE_LEVERAGE removed for allowing higher aggregate leverage
   TAKER_FEE_RATE: 0.0005,       // 0.05% example; adjust to your real rate
   MAINT_MARGIN_RATE: 0.005,     // 0.5% example; adjust to your real rate
 } as const;
@@ -63,21 +63,8 @@ export function validateOrderRisk(
   }
 
   const notionalAfter = fmtUSD(acct.openNotional + newNotional);
-  const effLevAfter = effectiveLeverage(notionalAfter, acct.equity);
-
-  if (effLevAfter > RISK.MAX_EFFECTIVE_LEVERAGE) {
-    return {
-      ok: false,
-      code: 'EFFECTIVE_LEVERAGE_CAP',
-      message: `Order exceeds max effective leverage of ${RISK.MAX_EFFECTIVE_LEVERAGE}×.`,
-      details: {
-        effLevAfter: Number(effLevAfter.toFixed(2)),
-        notionalAfter,
-        equity: fmtUSD(acct.equity),
-        cap: RISK.MAX_EFFECTIVE_LEVERAGE,
-      },
-    };
-  }
+  // Effective leverage after is informational only now; no rejection.
+  // const effLevAfter = effectiveLeverage(notionalAfter, acct.equity);
 
   const mm = maintenanceMarginUSD(notionalAfter);
   if (freeMargin < mm) {
