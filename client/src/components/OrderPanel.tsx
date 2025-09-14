@@ -96,7 +96,7 @@ export default function OrderPanel() {
     useAppStore.setState({ leverage: next });
   }
   function maybeGate() { return false; } // gating disabled for prod debug
-  function submit(chosen: 'BUY' | 'SELL') {
+  async function submit(chosen: 'BUY' | 'SELL') {
     try { console.debug('[OrderPanel] submit click', { chosen, volumeText, volume, leverage, freeMargin, required, levEnabled }); } catch {}
     setSide(chosen);
   // Ensure latest volume text committed prior to validation
@@ -110,11 +110,11 @@ export default function OrderPanel() {
     const stop_loss = slVal ? Number(slVal) : null;
   useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
     try { console.log('[ORDER] payload', { symbol, side: chosen, volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
-  const res = placeOrderStore();
+  const res = await placeOrderStore();
   try { console.debug('[OrderPanel] placeOrder result', res); } catch {}
     if (!res.ok) {
       // eslint-disable-next-line no-alert
-      alert(res.reason);
+      alert(res.error || 'Order failed');
     }
   }
 
@@ -127,14 +127,14 @@ export default function OrderPanel() {
     <div className="grid grid-cols-2 gap-2 mb-2">
         <button
           type="button"
-          onClick={() => submit('SELL')}
+          onClick={() => { void submit('SELL'); }}
           disabled={volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place SELL order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-rose-500 hover:bg-rose-600 transition-colors ${side==='SELL' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
         >SELL</button>
         <button
           type="button"
-          onClick={() => submit('BUY')}
+          onClick={() => { void submit('BUY'); }}
           disabled={volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place BUY order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-emerald-500 hover:bg-emerald-600 transition-colors ${side==='BUY' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
