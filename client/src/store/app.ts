@@ -1,6 +1,19 @@
 import { create } from 'zustand';
 import { API_BASE } from '../config';
 
+// Safe UUID generator (fallback if crypto.randomUUID not available in some prod browsers / runtimes)
+function safeId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && (crypto as any).randomUUID) return (crypto as any).randomUUID();
+  } catch {}
+  // RFC4122-ish fallback
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 export type Side = 'BUY' | 'SELL';
 export type TF = '1m' | '5m' | '15m';
 export type TSymbol = 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT';
@@ -190,7 +203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             const equityTemp = s.balance + totalPnl;
             const freeTemp = equityTemp - used;
             if (requiredMargin <= freeTemp) {
-              const pos: Position = { id: crypto.randomUUID(), symbol: o.symbol, side: o.side, volume: o.volume, entry, leverage: o.leverage, status: 'OPEN' };
+              const pos: Position = { id: safeId(), symbol: o.symbol, side: o.side, volume: o.volume, entry, leverage: o.leverage, status: 'OPEN' };
               filled.push(pos);
               used += requiredMargin;
             } else {
