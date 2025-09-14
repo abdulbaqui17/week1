@@ -26,9 +26,8 @@ export default function OrderPanel() {
   const required = notional / leverage;
   const posted = required;
   const effective = notional;
-  const insufficientFree = required > freeMargin;
-  const exceedsLev = false; // cap removed
-  const invalid = volume <= 0 || Number.isNaN(tradePrice) || (mode === 'LIMIT' && (price == null || price <= 0)) || required > freeMargin;
+  const insufficientFree = required > freeMargin; // now non-blocking
+  const invalid = volume <= 0 || Number.isNaN(tradePrice) || (mode === 'LIMIT' && (price == null || price <= 0)); // margin no longer blocks
   const [tpOpen, setTpOpen] = useState(false);
   const [slOpen, setSlOpen] = useState(false);
   const [tpVal, setTpVal] = useState<string>('');
@@ -96,25 +95,23 @@ export default function OrderPanel() {
     if (levEnabled && ackMax < 100 && next > ackMax) setShowLevModal(true);
     useAppStore.setState({ leverage: next });
   }
-  function maybeGate() {
-    if (levEnabled) return false; // once enabled never revert to banner
-    if (leverage <= 1) return false; // allow 1x orders without enabling
-    setShowLevModal(true); return true;
-  }
+  function maybeGate() { return false; } // gating disabled for prod debug
   function submit(chosen: 'BUY' | 'SELL') {
+    try { console.debug('[OrderPanel] submit click', { chosen, volumeText, volume, leverage, freeMargin, required, levEnabled }); } catch {}
     setSide(chosen);
   // Ensure latest volume text committed prior to validation
   commitVolume();
-  if (invalid || volErr) return;
+  if (invalid || volErr) { try { console.warn('[OrderPanel] blocked by invalid/volErr', { invalid, volErr }); } catch {} }
   // gating (no SL enforcement)
     const gated = maybeGate();
-    if (gated) return;
+    if (gated) { try { console.warn('[OrderPanel] gated (should not happen)'); } catch {} }
     // Stash TP/SL on store state temporarily (mutating via set)
     const take_profit = tpVal ? Number(tpVal) : null;
     const stop_loss = slVal ? Number(slVal) : null;
   useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
     try { console.log('[ORDER] payload', { symbol, side: chosen, volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
-    const res = placeOrderStore();
+  const res = placeOrderStore();
+  try { console.debug('[OrderPanel] placeOrder result', res); } catch {}
     if (!res.ok) {
       // eslint-disable-next-line no-alert
       alert(res.reason);
@@ -131,14 +128,14 @@ export default function OrderPanel() {
         <button
           type="button"
           onClick={() => submit('SELL')}
-          disabled={invalid || insufficientFree || exceedsLev}
+          disabled={volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place SELL order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-rose-500 hover:bg-rose-600 transition-colors ${side==='SELL' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
         >SELL</button>
         <button
           type="button"
           onClick={() => submit('BUY')}
-          disabled={invalid || insufficientFree || exceedsLev}
+          disabled={volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place BUY order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-emerald-500 hover:bg-emerald-600 transition-colors ${side==='BUY' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
         >BUY</button>

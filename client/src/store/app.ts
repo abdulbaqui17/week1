@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { getLastPrice } from '../lib/ws';
+import { API_BASE } from '../config';
 
 export type Side = 'BUY' | 'SELL';
 export type TF = '1m' | '5m' | '15m';
@@ -104,20 +105,62 @@ export const useAppStore = create<AppState>((set, get) => ({
     const s = get();
     const last = getLastPrice(s.symbol) ?? s.price;
     const tradePrice = s.mode === 'MARKET' ? last : s.price;
-    if (tradePrice == null) return { ok: false, reason: 'No price' } as const;
-    if (s.volume <= 0) return { ok: false, reason: 'Invalid volume' } as const;
+    // Debug: log initial intent
+    try { console.debug('[placeOrder] invoked', { symbol: s.symbol, side: s.side, mode: s.mode, volume: s.volume, leverage: s.leverage, tradePrice, price: s.price }); } catch {}
+    if (tradePrice == null) {
+      try { console.warn('[placeOrder] abort: no tradePrice'); } catch {}
+      return { ok: false, reason: 'No price' } as const;
+    }
+    if (s.volume <= 0) {
+      try { console.warn('[placeOrder] abort: non-positive volume', s.volume); } catch {}
+      return { ok: false, reason: 'Invalid volume' } as const;
+    }
     const notional = tradePrice * s.volume;
     const requiredMargin = notional / s.leverage;
-  if (s.mode === 'MARKET') {
-      if (requiredMargin > s.freeMargin) return { ok: false, reason: 'Insufficient margin' } as const;
-  const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN', take_profit: (s as any).take_profit ?? null, stop_loss: (s as any).stop_loss ?? null };
-      set({ positions: [pos, ...s.positions], usedMargin: s.usedMargin + requiredMargin, freeMargin: s.freeMargin - requiredMargin });
-  try { console.log('[ORDER] store upsert', { id: pos.id, take_profit: pos.take_profit, stop_loss: pos.stop_loss }); } catch {}
+    // Relaxed: do NOT block on local freeMargin; always attempt network request. Server will validate.
+    // Fire-and-forget network request (debug only). Keep existing local simulation for immediate UX.
+    const payload: any = {
+      symbol: s.symbol,
+      side: s.side,
+      volume: s.volume,
+      leverage: s.leverage,
+      mode: s.mode,
+      price: s.mode === 'LIMIT' ? s.price : undefined,
+      take_profit: (s as any).take_profit ?? null,
+      stop_loss: (s as any).stop_loss ?? null,
+    };
+    try {
+      console.debug('[placeOrder] network POST', `${API_BASE}/v1/orders`, payload);
+      fetch(`${API_BASE}/v1/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(async r => {
+        const txt = await r.text().catch(()=> '');
+        if (!r.ok) {
+          console.warn('[placeOrder] server rejected', r.status, txt);
+        } else {
+          console.debug('[placeOrder] server ok', r.status, txt);
+        }
+      }).catch(err => {
+        console.error('[placeOrder] fetch error', err);
+      });
+    } catch (e) {
+      try { console.error('[placeOrder] fetch setup error', e); } catch {}
+    }
+    if (s.mode === 'MARKET') {
+      const pos: Position = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, entry: tradePrice, leverage: s.leverage, status: 'OPEN', take_profit: (s as any).take_profit ?? null, stop_loss: (s as any).stop_loss ?? null };
+      set({ positions: [pos, ...s.positions], usedMargin: s.usedMargin + requiredMargin, freeMargin: Math.max(0, s.freeMargin - requiredMargin) });
+      try { console.log('[ORDER] store upsert (local optimistic)', { id: pos.id, take_profit: pos.take_profit, stop_loss: pos.stop_loss }); } catch {}
       return { ok: true } as const;
     } else { // LIMIT → store pending order (margin not reserved until fill)
-      if (s.price == null || s.price <= 0) return { ok: false, reason: 'Invalid limit price' } as const;
+      if (s.price == null || s.price <= 0) {
+        try { console.warn('[placeOrder] abort: invalid limit price', s.price); } catch {}
+        return { ok: false, reason: 'Invalid limit price' } as const;
+      }
       const order = { id: crypto.randomUUID(), symbol: s.symbol, side: s.side, volume: s.volume, leverage: s.leverage, price: s.price, createdAt: Date.now() };
       set({ pendingOrders: [order, ...s.pendingOrders] });
+      try { console.log('[ORDER] pending limit (local optimistic)', { id: order.id }); } catch {}
       return { ok: true } as const;
     }
   },
