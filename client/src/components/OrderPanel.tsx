@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { LeverageGateBanner } from './LeverageGateBanner';
 import { LeverageGuideModal } from './LeverageGuideModal';
 import { LeverageCard } from './LeverageCard';
+import { API_BASE } from '../config';
 
 export default function OrderPanel() {
   const symbol = useAppStore(s => s.symbol);
@@ -19,6 +20,7 @@ export default function OrderPanel() {
   const lastPriceBySymbol = useAppStore(s => s.lastPriceBySymbol);
   const placeOrderStore = useAppStore(s => s.placeOrder);
   const pendingOrders = useAppStore(s => s.pendingOrders).filter(o => o.symbol === symbol);
+  const risk = useAppStore(s => s.risk);
 
   const lastPrice = lastPriceBySymbol[symbol] ?? 0;
   const tradePrice = mode === 'MARKET' ? lastPrice : (price ?? lastPrice);
@@ -97,7 +99,8 @@ export default function OrderPanel() {
   }
   function maybeGate() { return false; } // gating disabled for prod debug
   async function submit(chosen: 'BUY' | 'SELL') {
-    try { console.debug('[OrderPanel] submit click', { chosen, volumeText, volume, leverage, freeMargin, required, levEnabled }); } catch {}
+  const payloadPreview = { symbol, side: chosen, volume, leverage, price: mode === 'LIMIT' ? price : undefined };
+  try { console.debug('[OrderPanel] submit', chosen, 'API_BASE=', API_BASE, 'payload=', payloadPreview); } catch {}
     setSide(chosen);
   // Ensure latest volume text committed prior to validation
   commitVolume();
@@ -245,6 +248,17 @@ export default function OrderPanel() {
             setShowLevModal(false);
           }}
         />
+      )}
+      {/* Backend maintenance margin warning */}
+      {risk.mm != null && (freeMargin < risk.mm) && (
+        <div className="mt-2 rounded-md border border-rose-700/60 bg-rose-950/60 p-2 text-[11px] text-rose-300">
+          Backend minimum maintenance: ${risk.mm.toFixed(2)}. Your free margin after this order would be below that.
+        </div>
+      )}
+      {risk.lastError && (
+        <div className="mt-2 rounded-md border border-amber-600/60 bg-amber-950/40 p-2 text-[11px] text-amber-300">
+          Server: {risk.lastError}
+        </div>
       )}
     </aside>
   );

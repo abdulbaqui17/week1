@@ -60,6 +60,11 @@ type AppState = {
     price: number; // limit price
     createdAt: number;
   }[];
+  risk: {
+    mm: number | null; // backend-reported minimum maintenance margin requirement
+    lastFreeMargin: number | null; // backend-reported free margin at rejection
+    lastError: string | null; // last backend error code/message
+  };
   closePosition(id: string): void;
   updatePosition(id: string, patch: Partial<Position>): void;
   updateSymbolPrice(sym: TSymbol, price: number): void;
@@ -96,6 +101,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   leverage: 1,
   positions: [],
   pendingOrders: [],
+  risk: { mm: null, lastFreeMargin: null, lastError: null },
   setSymbol(symbol) { set({ symbol }); },
   setTf(tf) { set({ tf }); },
   setSide(side) { set({ side }); },
@@ -134,9 +140,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       const json = await res.json().catch(() => ({}));
       console.log('[placeOrder] status', res.status, json);
       if (res.ok) return { ok: true, data: json };
+      // Capture backend maintenance margin risk details if provided
+      try {
+        if (json && (json.code === 'MAINT_MARGIN_AT_RISK' || json.code === 'MAINT_MARGIN' )) {
+          const mm = Number(json?.details?.mm);
+          const fm = Number(json?.details?.freeMargin ?? json?.details?.free_margin);
+          useAppStore.setState(s2 => ({ risk: { mm: Number.isFinite(mm) ? mm : s2.risk.mm, lastFreeMargin: Number.isFinite(fm) ? fm : s2.risk.lastFreeMargin, lastError: json.code || 'MAINT_MARGIN_AT_RISK' } }));
+        } else if (json && json.code) {
+          useAppStore.setState(s2 => ({ risk: { ...s2.risk, lastError: json.code } }));
+        }
+      } catch {}
       return { ok: false, error: json };
     } catch (err) {
       console.warn('[placeOrder] network error', err);
+      useAppStore.setState(s2 => ({ risk: { ...s2.risk, lastError: 'NETWORK_ERROR' } }));
       return { ok: false, error: 'NETWORK_ERROR' };
     }
   },
