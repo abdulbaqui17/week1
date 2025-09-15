@@ -15,6 +15,8 @@ export default function App() {
   const setLeverage = useAppStore((s) => s.setLeverage);
   const mode = useAppStore((s) => s.mode);
   const volume = useAppStore((s) => s.volume);
+  const fetchAccount = useAppStore(s => s.fetchAccount);
+  const fetchPositions = useAppStore(s => s.fetchPositions);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -34,6 +36,14 @@ export default function App() {
   // Hook alerts (assumes global singleton WS if provided through window.__WS__ else none)
   // Won't alter layout or styling.
   useAlerts((globalThis as any).__WS__ || null);
+
+  // Poll authoritative server snapshot
+  useEffect(() => {
+    fetchAccount().catch(()=>{});
+    fetchPositions().catch(()=>{});
+    const id = setInterval(() => { fetchAccount().catch(()=>{}); }, 1000);
+    return () => clearInterval(id);
+  }, [fetchAccount, fetchPositions]);
 
   return (
   <div className="grid h-screen grid-rows-[auto_1fr] grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_20rem] xl:gap-x-2 bg-slate-950 text-slate-200">

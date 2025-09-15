@@ -11,10 +11,11 @@ const ROWS: Row[] = [
 export default function Sidebar() {
   const symbol = useAppStore((s) => s.symbol);
   const setSymbol = useAppStore((s) => s.setSymbol);
-  const equity = useAppStore((s) => s.equity);
-  const freeMargin = useAppStore((s) => s.freeMargin);
-  const usedMargin = useAppStore((s) => s.usedMargin);
-  const marginLevel = useAppStore((s) => s.marginLevel);
+  const account = useAppStore(s => s.account);
+  const equity = account.equity;
+  const freeMargin = account.free;
+  const usedMargin = account.used;
+  const marginLevel = usedMargin > 0 ? (equity / usedMargin) * 100 : null;
   const leverage = useAppStore((s) => s.leverage);
   const lastPriceBy = useAppStore((s) => s.lastPriceBySymbol);
   const price = lastPriceBy[symbol] || 0;

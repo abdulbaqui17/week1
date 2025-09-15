@@ -19,7 +19,7 @@ export default function PositionsPanel() {
   const openPositions = useMemo(() => positions.filter(p => p.status === 'OPEN'), [positions]);
   const closedPositions = useMemo(() => (
     positions
-      .filter(p => p.status === 'CLOSED')
+      .filter(p => p.status === 'CLOSED' || p.status === 'LIQUIDATED')
       .sort((a,b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
       .slice(0,4)
   ), [positions]);
@@ -122,6 +122,7 @@ export default function PositionsPanel() {
                   <th className="w-[160px]">Close price</th>
                   <th className="w-[120px]">P/L, USD</th>
                   <th className="w-[200px]">Closed at</th>
+                  <th className="w-[120px]">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -142,6 +143,13 @@ export default function PositionsPanel() {
                       <td className="w-[160px]">{fmt(p.closePrice ?? p.entry)}</td>
                       <td className={`w-[120px] ${pnlCls}`}>{formatSigned(p.realizedPnl ?? 0)}</td>
                       <td className="w-[200px]">{p.closedAt ? new Date(p.closedAt).toLocaleString() : '—'}</td>
+                      <td className="w-[120px]">
+                        {p.status === 'LIQUIDATED' ? (
+                          <span className="inline-flex items-center rounded px-2 py-0.5 text-xs bg-rose-500/10 text-rose-400 font-medium">LIQUIDATED</span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">Closed</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

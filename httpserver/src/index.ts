@@ -15,6 +15,10 @@ import {
 } from './lib/liquidation.js';
 import { createClient } from 'redis';
 import { startSlTpWatcher } from './sl_tp_watcher.js';
+// Legacy riskEngine kept temporarily; new snapshot logic below centralizes account state
+import { computeSnapshot as reCompute, enforceLiquidation as reEnforce } from './riskEngine.js';
+import { computeSnapshot } from './risk/snapshot.js';
+import { checkLiquidations } from './risk/liquidation.js';
 
 const PORT = parseInt(process.env.API_PORT ?? '8081', 10);
 const DATABASE_URL =
@@ -33,6 +37,7 @@ export const redis = createClient({ url: REDIS_URL });
 const KEY_BALANCE = 'acct:demo:balance';
 const KEY_LEVERAGE = 'acct:demo:leverage';
 const KEY_ORDERS = 'acct:demo:orders';
+const KEY_SNAPSHOT = 'acct:demo:snapshot';
 
 // Helper functions
 export async function initDemo() {
@@ -41,7 +46,8 @@ export async function initDemo() {
     await redis.connect();
   }
   // Seed defaults if absent
-  await redis.set(KEY_BALANCE, String(5000), { NX: true });
+  const seedBal = Number(process.env.DEMO_BALANCE_USD ?? 5000);
+  await redis.set(KEY_BALANCE, String(seedBal), { NX: true });
   await redis.set(KEY_LEVERAGE, String(100), { NX: true });
   await redis.set(KEY_ORDERS, JSON.stringify([]), { NX: true });
 }
@@ -235,6 +241,7 @@ async function getLatestPriceForSymbol(symbol: string): Promise<number | undefin
   return undefined;
 }
 
+// Legacy snapshot (kept for leverage endpoint only) – new risk engine provides authoritative metrics
 async function computeAccountSnapshot() {
   // Ensure demo state exists
   await initDemo();
@@ -303,10 +310,53 @@ async function computeAccountSnapshot() {
 
 app.get('/api/v1/account', async (_req, res) => {
   try {
-    const snapshot = await computeAccountSnapshot();
-    return res.json(snapshot);
+    await initDemo();
+    const prices = await gatherPrices();
+    const snap = await computeSnapshot(redis, prices);
+    await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
+    return res.json(snap);
   } catch (e) {
     console.error('[api] /api/v1/account error:', e);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+// Helper: gather latest prices for all open symbols
+async function gatherPrices(): Promise<Record<string, number>> {
+  await initDemo();
+  const orders = await listOrders<any>();
+  const symbols = new Set<string>();
+  for (const o of orders) if (o && String(o.status ?? 'open') === 'open') symbols.add(ensureUsdt(String(o.symbol)));
+  const prices: Record<string, number> = {};
+  for (const s of symbols) {
+    const p = await getLatestPriceForSymbol(s);
+    if (Number.isFinite(p as number)) prices[s] = Number(p);
+  }
+  return prices;
+}
+
+app.get('/api/v1/positions', async (_req, res) => {
+  try {
+    await initDemo();
+    const orders = await listOrders<any>();
+    return res.json(orders);
+  } catch (e) {
+    console.error('[api] /api/v1/positions error:', e);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+app.post('/api/v1/reset-demo', async (_req, res) => {
+  try {
+    await initDemo();
+    const startBal = Number(process.env.DEMO_BALANCE_USD ?? 5000);
+    await redis.set(KEY_BALANCE, String(startBal));
+    await redis.set(KEY_ORDERS, JSON.stringify([]));
+    const prices = await gatherPrices();
+    const snap = await computeSnapshot(redis, prices);
+    await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
+    return res.json({ ok: true, balance: startBal, snapshot: snap });
+  } catch (e) {
+    console.error('[api] /api/v1/reset-demo error:', e);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
@@ -349,137 +399,72 @@ app.get('/api/v1/orders', async (_req, res) => {
 app.post('/api/v1/orders', async (req, res) => {
   try {
     await initDemo();
-    const body = req.body ?? {};
-  try { console.log('[ORDER] payload', { symbol: body.symbol, side: body.side, volume: body.volume, tp: body.tp ?? body.take_profit, sl: body.sl ?? body.stop_loss, leverage: body.leverage }); } catch {}
-    const rawSymbol = String(body.symbol || '');
+    const body = req.body as any || {};
+    // Contract validation
+    const rawSymbol = String(body.symbol || '').trim();
     const rawSide = String(body.side || '').toUpperCase();
-  const volume = Number(body.volume);
-  const tpRaw = body.tp;
-  const slRaw = body.sl;
-  const tp = tpRaw != null && tpRaw !== '' ? Number(tpRaw) : undefined;
-  const sl = slRaw != null && slRaw !== '' ? Number(slRaw) : undefined;
-
-    if (!rawSymbol) return res.status(400).json({ error: 'missing_symbol' });
-    if (!Number.isFinite(volume) || volume <= 0) return res.status(400).json({ error: 'invalid_volume' });
-    if (!(rawSide === 'BUY' || rawSide === 'SELL')) return res.status(400).json({ error: 'invalid_side', allowed: ['BUY', 'SELL'] });
-
+    const mode = body.mode as string;
+    if (!rawSymbol) return res.status(422).json({ error: 'MISSING_SYMBOL' });
+    if (!(rawSide === 'BUY' || rawSide === 'SELL')) return res.status(422).json({ error: 'BAD_SIDE' });
+    if (!mode || !['UNITS','NOTIONAL'].includes(mode)) return res.status(422).json({ error: 'BAD_MODE' });
+    if ('volume' in body) return res.status(422).json({ error: 'VOLUME_DEPRECATED_USE_MODE' });
+    const Lraw = Number(body.leverage);
+    if (!Number.isFinite(Lraw) || Lraw <= 0) return res.status(422).json({ error: 'LEVERAGE_REQUIRED' });
+    const L = Math.max(1, Math.min(100, Math.floor(Lraw)));
+    if (mode === 'UNITS' && !(Number(body.qtyUnits) > 0)) return res.status(422).json({ error: 'QTY_UNITS_REQUIRED' });
+    if (mode === 'NOTIONAL' && !(Number(body.notionalUsd) > 0)) return res.status(422).json({ error: 'NOTIONAL_REQUIRED' });
+    if (mode === 'UNITS' && Number(body.qtyUnits) > 0 && Number(body.notionalUsd) > 0) {
+      // Consistency check if both provided
+      // Will recompute notional from mark and compare
+    }
     const symbol = ensureUsdt(rawSymbol);
-    // Resolve leverage: prefer body, fallback to stored leverage
-    let lev = Number(req.body?.leverage);
-    if (!Number.isFinite(lev)) {
-      lev = await getLeverage();
+    const mark = await getLatestPriceForSymbol(symbol);
+    if (!Number.isFinite(mark as number) || !(mark as number > 0)) return res.status(503).json({ error: 'PRICE_UNAVAILABLE', symbol });
+    const qtyUnits = mode === 'UNITS' ? Number(body.qtyUnits) : (Number(body.notionalUsd) / (mark as number));
+    if (!(qtyUnits > 0)) return res.status(422).json({ error: 'UNITS_COMPUTE_FAILED' });
+    // Optional consistency if both present
+    if (mode === 'UNITS' && Number(body.notionalUsd) > 0) {
+      const diff = Math.abs((Number(body.notionalUsd) / (mark as number)) - qtyUnits);
+      if (diff / qtyUnits > 0.001) return res.status(422).json({ error: 'CONFLICTING_FIELDS' });
     }
-    if (![1,5,10,20,25,50,100].includes(lev)) {
-      return res.status(400).json({ error: 'invalid_leverage', allowed: [1,5,10,20,25,50,100] });
+    const notional = Math.abs(qtyUnits) * (mark as number);
+    const initMargin = notional / L;
+    // Current free from snapshot
+    const prices = await gatherPrices();
+    const snapBefore = await computeSnapshot(redis, prices);
+    const freeBefore = snapBefore.free;
+    if (freeBefore < initMargin) {
+      return res.status(400).json({ error: 'INSUFFICIENT_FREE_MARGIN', free: Number(freeBefore.toFixed(2)), required: Number(initMargin.toFixed(2)), details: { notional: Number(notional.toFixed(2)), leverage: L, units: Number(qtyUnits.toFixed(8)), mark } });
     }
-
-  // Lookup latest price (Redis price:last:<SYMBOL> with PG fallback)
-  const price = await getLatestPriceForSymbol(symbol);
-    if (!Number.isFinite(price as number)) {
-      return res.status(503).json({ error: 'price_unavailable', symbol });
-    }
-
-  // Get account snapshot to evaluate risk
-  const snapshot = await computeAccountSnapshot();
-    // Build a lightweight account state for risk checks
-    const orders = await listOrders<any>();
-    let openNotional = 0;
-    for (const o of orders) {
-      if (!o || String(o.status ?? 'open') !== 'open') continue;
-      const vol = Number(o.volume);
-      const entry = Number(o.entry);
-      if (Number.isFinite(vol) && Number.isFinite(entry)) openNotional += Math.abs(entry * vol);
-    }
-    const acct = { equity: snapshot.equity, usedMargin: snapshot.marginUsed, openNotional };
-    const risk = validateOrderRisk({ userId: 'demo', symbol, side: rawSide, qty: volume, price: price as number }, acct);
-    if (!(risk as any).ok) {
-      // Map insufficient margin to 402 so client can show a specific toast
-      const r: any = risk;
-      const status = r.code === 'INSUFFICIENT_MARGIN' ? 402 : 400;
-      return res.status(status).json(risk);
-    }
-
-    // --- RISK CHECKS (pre-trade) -------------------------------------------------
-    // Simplified: we treat all stored open orders as positions for gross notional & used margin.
-    const existing = await listOrders<any>();
-    let grossNotional = 0; // sum abs(entry * volume) of open
-    for (const o of existing) {
-      if (!o || String(o.status ?? 'open') !== 'open') continue;
-      const e = Number(o.entry); const v = Number(o.volume);
-      if (!Number.isFinite(e) || !Number.isFinite(v)) continue;
-      grossNotional += Math.abs(e * v);
-    }
-    const notionalNew = Number(price) * volume; // float math (demo environment)
-    const equityNum = (await computeAccountSnapshot()).equity; // already fmtUSD -> number
-    const equity = Number(equityNum);
-    if (!(equity > 0)) {
-      console.log('[RISK] reject INSUFFICIENT_EQUITY', { symbol, side: rawSide, volume, price });
-      return res.status(400).json({ error: 'INSUFFICIENT_EQUITY' });
-    }
-    // Using prior calculations below for margin after we know leverage / usedMargin candidate
-    // We'll approximate free margin from snapshot again (balance + unrealized - used)
-    const snapshot2 = await computeAccountSnapshot();
-    const free = Number(snapshot2.freeMargin);
-    const postedPreview = notionalNew / lev; // required margin for this order
-    const feeReserve = 0; // no fee helper yet; placeholder
-    if (postedPreview + feeReserve > free) {
-      const payload = { required: Number((postedPreview + feeReserve).toFixed(2)), free: Number(free.toFixed(2)) };
-      console.log('[RISK] reject INSUFFICIENT_FREE_MARGIN', { symbol, side: rawSide, volume, price, lev, ...payload });
-      return res.status(400).json({ error: 'INSUFFICIENT_FREE_MARGIN', ...payload });
-    }
-  // Removed effective leverage cap check to allow higher exposures (risk handled via liquidation logic elsewhere)
-    // -----------------------------------------------------------------------------
-
-    // Lock margin and persist position-like order
-    let vol = volume; // mutable for 100x rule
-    let notional: number;
-    let usedMargin: number;
-    const fm = Number(snapshot.balance) - Number(snapshot.marginUsed ?? 0);
-
-    if (lev === 100) {
-      if (fm <= 0) {
-        return res.status(402).json({ error: 'NO_FREE_MARGIN', free: fm });
-      }
-      usedMargin = fm;                         // lock ALL free margin
-      notional = usedMargin * lev;             // exposure
-      vol = notional / Number(price);          // scale size to consume full balance
-    } else {
-      notional = Number(price) * vol;
-      usedMargin = notional / (lev || 1);
-      if (usedMargin > fm) {
-        return res.status(402).json({ error: 'INSUFFICIENT_MARGIN', required: usedMargin, free: fm });
-      }
-    }
-
+    const tpRaw = body.tp; const slRaw = body.sl;
+    const tp = tpRaw != null && tpRaw !== '' ? Number(tpRaw) : undefined;
+    const sl = slRaw != null && slRaw !== '' ? Number(slRaw) : undefined;
     const order = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
       createdAt: new Date().toISOString(),
       symbol,
       side: rawSide,
       type: 'market' as const,
-  volume: vol,
-      entry: Number(price),
-      requiredMargin: usedMargin,
-      leverage: lev,
-      tp: Number.isFinite(tp as number) ? (tp as number) : undefined,
-      sl: Number.isFinite(sl as number) ? (sl as number) : undefined,
+      volume: qtyUnits, // store exact user units
+      entry: mark,
+      requiredMargin: initMargin,
+      leverage: L,
       status: 'open' as const,
-      take_profit: Number.isFinite(tp as number) ? (tp as number) : undefined,
-      stop_loss: Number.isFinite(sl as number) ? (sl as number) : undefined,
+      tp: Number.isFinite(tp as number) ? tp : undefined,
+      sl: Number.isFinite(sl as number) ? sl : undefined,
+      take_profit: Number.isFinite(tp as number) ? tp : undefined,
+      stop_loss: Number.isFinite(sl as number) ? sl : undefined,
+      mode,
     };
-
-    await pushOrder(order);
-
-    // Publish event to Redis channel 'orders'
-    try {
-      if (!redis.isOpen) await redis.connect();
-      await redis.publish('orders', JSON.stringify({ event: 'order:placed', order }));
-    } catch (e) {
-      console.error('[api] publish order error:', e);
-    }
-
-  try { console.log('[ORDER] persisted position', { id: order.id, symbol: order.symbol, take_profit: order.take_profit, stop_loss: order.stop_loss }); } catch {}
-  return res.json({ ok: true, order });
+  await pushOrder(order);
+  // After placing order run strict liquidation then snapshot
+  const pricesAfter = await gatherPrices();
+  await checkLiquidations(redis, pricesAfter);
+  const snapAfter = await computeSnapshot(redis, pricesAfter);
+  await redis.set(KEY_SNAPSHOT, JSON.stringify(snapAfter));
+    try { console.log('[placeOrder]', { mode, units: qtyUnits, notional, leverage: L, initMargin, freeBefore, mark, id: order.id }); } catch {}
+    try { if (!redis.isOpen) await redis.connect(); await redis.publish('orders', JSON.stringify({ event: 'order:placed', order })); } catch {}
+    return res.json({ ok: true, order, account: snapAfter });
   } catch (e) {
     console.error('[api] /api/v1/orders POST error:', e);
     return res.status(500).json({ error: 'internal_error' });
@@ -489,58 +474,7 @@ app.post('/api/v1/orders', async (req, res) => {
 // Start SL/TP watcher (event-driven on trade ticks)
 startSlTpWatcher().catch(e => console.error('[api] sl/tp watcher start error', e));
 
-// --- Simple 1% adverse move liquidation ---
-setInterval(async () => {
-  try {
-    await initDemo();
-    const [bal, orders] = await Promise.all([getBalance(), listOrders<any>()]);
-    const symbols = new Set<string>();
-    for (const o of orders) if (o && String(o.status ?? 'open') === 'open') symbols.add(ensureUsdt(String(o.symbol)));
-    const prices: Record<string, number> = {};
-    for (const s of symbols) {
-      const p = await getLatestPriceForSymbol(s);
-      if (Number.isFinite(p as number)) prices[s] = Number(p);
-    }
-  const acct: MAccount = { id: 'demo', balance: bal, equity: bal, positions: [] };
-    for (const o of orders) {
-      if (!o || String(o.status ?? 'open') !== 'open') continue;
-      const symbol = ensureUsdt(String(o.symbol));
-      const entryPrice = Number(o.entry);
-  const size = Number(o.volume);
-      const lev = Number(o.leverage || 1);
-  const side: MSide = String(o.side).toUpperCase() === 'SELL' ? 'sell' : 'buy';
-      if (!Number.isFinite(entryPrice) || !Number.isFinite(size) || size <= 0) continue;
-      const notional = entryPrice * size;
-  const usedMargin = Number.isFinite(Number(o.requiredMargin)) ? Number(o.requiredMargin) : (notional / Math.max(1, lev));
-  const pos: MPosition = { id: String(o.id), symbol: symbol as any, side, entryPrice, size, leverage: (lev as 1|5|10|20|100), notional, usedMargin, status: 'open', openedAt: Date.parse(o.createdAt || new Date().toISOString()) };
-      acct.positions.push(pos);
-    }
-    // Run tick; this may liquidate and adjust balance
-  mOnPriceTick(acct, prices as any);
-    if (acct.balance !== bal) await setBalance(acct.balance);
-    // Persist liquidated positions back into orders list
-    let mutated = false;
-    const nowIso = new Date().toISOString();
-    for (let i = 0; i < orders.length; i++) {
-      const o = orders[i];
-      if (!o || String(o.status ?? 'open') !== 'open') continue;
-  const p = acct.positions.find((x: MPosition) => String(x.id) === String(o.id));
-      if (!p || p.status === 'open') continue;
-      const updated = { ...o, status: 'liquidated', exit: Number(p.closedPrice), pnl: Number(p.realizedPnl ?? 0), closedAt: nowIso, closedBy: 'auto' };
-      orders[i] = updated;
-      mutated = true;
-      try {
-        if (!redis.isOpen) await redis.connect();
-        await redis.publish('orders', JSON.stringify({ event: 'order:closed', order: updated }));
-        await redis.publish('orders', JSON.stringify({ event: 'position:liquidated', order: updated }));
-      } catch {}
-    }
-    if (mutated) {
-      const persisted = pruneClosedOrders(orders, 5);
-      await redis.set('acct:demo:orders', JSON.stringify(persisted));
-    }
-  } catch {}
-}, 1000);
+// (Removed old simple liquidation loop) strict liquidation enforced in snapshot loop below.
 
 // Close an open order: realize PnL into balance and mark as closed
 app.post('/api/v1/orders/:id/close', async (req, res) => {
@@ -587,8 +521,12 @@ app.post('/api/v1/orders/:id/close', async (req, res) => {
     }
 
     // Return new account snapshot and updated order
-    const snapshot = await computeAccountSnapshot();
-    return res.json({ ok: true, order: updated, account: snapshot });
+    // Enforce after close for updated snapshot
+  const prices = await gatherPrices();
+  await checkLiquidations(redis, prices);
+  const snap = await computeSnapshot(redis, prices);
+  await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
+  return res.json({ ok: true, order: updated, account: snap });
   } catch (e) {
     console.error('[api] /api/v1/orders/:id/close error:', e);
     return res.status(500).json({ error: 'internal_error' });
@@ -600,39 +538,24 @@ app.post('/api/v1/reset', async (_req, res) => {
   try {
     await initDemo();
     if (!redis.isOpen) await redis.connect();
-    await Promise.all([
-      setBalance(fmtUSD(5000)),
-  setLeverage(100),
-      redis.set('acct:demo:orders', JSON.stringify([])),
-    ]);
-    return res.json({ ok: true, balance: fmtUSD(5000) });
+    return res.json({ ok: true });
   } catch (e) {
     console.error('[api] /api/v1/reset error:', e);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`[api] listening on :${PORT}`);
-});
-
-// Initialize demo state with scaled balance
-(async () => {
+// Periodic enforcement loop (authoritative snapshot maintenance)
+setInterval(async () => {
   try {
     await initDemo();
-    const DEMO_BALANCE_USD = Number(process.env.DEMO_BALANCE_USD ?? '5000');
-    if (!Number.isFinite(DEMO_BALANCE_USD) || DEMO_BALANCE_USD < 0) throw new Error('Invalid DEMO_BALANCE_USD');
-    const balanceScaled = scaleMoney(DEMO_BALANCE_USD);
-    if (Number(balanceScaled) < MONEY_SCALE) console.warn('[seed] suspiciously small balance');
-    // Persist unscaled numeric (legacy) while keeping scaled in log (demo storage uses simple numeric set)
-    await setBalance(Number((Number(balanceScaled) / MONEY_SCALE).toFixed(2)));
-    const [bal, lev, orders] = await Promise.all([
-      getBalance(),
-      getLeverage(),
-      listOrders(),
-    ]);
-    console.log(`[api] demo seeded: balance=${formatMoneyScaled(balanceScaled)}, leverage=${lev}, orders=${orders.length}`);
-  } catch (e) {
-    console.error('[api] demo init error:', e);
-  }
-})();
+    const prices = await gatherPrices();
+    await checkLiquidations(redis, prices);
+    const snap = await computeSnapshot(redis, prices);
+    await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
+  } catch {/* ignore */}
+}, 1000);
+
+app.listen(PORT, () => {
+  console.log(`API server running on http://localhost:${PORT}`);
+});

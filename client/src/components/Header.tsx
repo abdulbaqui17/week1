@@ -6,11 +6,12 @@ export default function Header() {
   const setSymbol = useAppStore((s) => s.setSymbol);
   const connection = useAppStore((s) => s.connection);
   const lastTickTs = useAppStore((s) => s.lastTickTs);
-  const equity = useAppStore((s) => s.equity);
-  const freeMargin = useAppStore((s) => s.freeMargin);
-  const usedMargin = useAppStore((s) => s.usedMargin);
-  const marginLevel = useAppStore((s) => s.marginLevel);
-  const pnlTotal = useAppStore((s) => s.pnlTotal);
+  const account = useAppStore(s => s.account);
+  const equity = account.equity;
+  const freeMargin = account.free;
+  const usedMargin = account.used;
+  const pnlTotal = account.upnl;
+  const marginLevel = usedMargin > 0 ? (equity / usedMargin) * 100 : null;
   const tabs: { key: 'BTCUSDT' | 'ETHUSDT' | 'SOLUSDT'; label: 'BTC' | 'ETH' | 'SOL' }[] = [
     { key: 'BTCUSDT', label: 'BTC' },
     { key: 'ETHUSDT', label: 'ETH' },

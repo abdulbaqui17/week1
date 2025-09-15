@@ -1,5 +1,5 @@
 import { useAppStore } from '../store/app';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { LeverageGateBanner } from './LeverageGateBanner';
 import { LeverageGuideModal } from './LeverageGuideModal';
 import { LeverageCard } from './LeverageCard';
@@ -19,6 +19,8 @@ export default function OrderPanel() {
   const equity = useAppStore(s => s.equity);
   const lastPriceBySymbol = useAppStore(s => s.lastPriceBySymbol);
   const placeOrderStore = useAppStore(s => s.placeOrder);
+  const isPlacing = useAppStore(s => s.isPlacing);
+  const fetchAccount = useAppStore(s => s.fetchAccount);
   const pendingOrders = useAppStore(s => s.pendingOrders).filter(o => o.symbol === symbol);
   const risk = useAppStore(s => s.risk);
 
@@ -98,26 +100,29 @@ export default function OrderPanel() {
     useAppStore.setState({ leverage: next });
   }
   function maybeGate() { return false; } // gating disabled for prod debug
+  useEffect(() => { fetchAccount().catch(()=>{}); }, [fetchAccount]);
+  const clickGuard = useRef(0);
   async function submit(chosen: 'BUY' | 'SELL') {
-  const payloadPreview = { symbol, side: chosen, volume, leverage, price: mode === 'LIMIT' ? price : undefined };
-  try { console.debug('[OrderPanel] submit', chosen, 'API_BASE=', API_BASE, 'payload=', payloadPreview); } catch {}
+    const now = Date.now();
+    if (now - clickGuard.current < 400) return; // debounce 400ms
+    clickGuard.current = now;
+    if (isPlacing) return;
+  const payloadPreview = { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, leverage };
+    try { console.debug('[OrderPanel] submit', chosen, 'API_BASE=', API_BASE, 'payload=', payloadPreview); } catch {}
     setSide(chosen);
-  // Ensure latest volume text committed prior to validation
-  commitVolume();
-  if (invalid || volErr) { try { console.warn('[OrderPanel] blocked by invalid/volErr', { invalid, volErr }); } catch {} }
-  // gating (no SL enforcement)
+    commitVolume();
+    if (invalid || volErr) { try { console.warn('[OrderPanel] blocked by invalid/volErr', { invalid, volErr }); } catch {} }
     const gated = maybeGate();
     if (gated) { try { console.warn('[OrderPanel] gated (should not happen)'); } catch {} }
-    // Stash TP/SL on store state temporarily (mutating via set)
     const take_profit = tpVal ? Number(tpVal) : null;
     const stop_loss = slVal ? Number(slVal) : null;
-  useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
-    try { console.log('[ORDER] payload', { symbol, side: chosen, volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
-  const res = await placeOrderStore();
-  try { console.debug('[OrderPanel] placeOrder result', res); } catch {}
+    useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
+  try { console.log('[ORDER] payload', { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
+  const res = await placeOrderStore({ symbol, side: chosen, qtyUnits: volume, leverage, tp: take_profit, sl: stop_loss });
+    try { console.debug('[OrderPanel] placeOrder result', res); } catch {}
     if (!res.ok) {
       // eslint-disable-next-line no-alert
-      alert(res.error || 'Order failed');
+      alert(String(res.error || 'Order failed'));
     }
   }
 
@@ -131,14 +136,14 @@ export default function OrderPanel() {
         <button
           type="button"
           onClick={() => { void submit('SELL'); }}
-          disabled={volume <= 0 || Number.isNaN(tradePrice)}
+          disabled={isPlacing || volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place SELL order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-rose-500 hover:bg-rose-600 transition-colors ${side==='SELL' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
         >SELL</button>
         <button
           type="button"
           onClick={() => { void submit('BUY'); }}
-          disabled={volume <= 0 || Number.isNaN(tradePrice)}
+          disabled={isPlacing || volume <= 0 || Number.isNaN(tradePrice)}
           aria-label="Place BUY order"
       className={`h-10 rounded-lg font-medium text-white text-sm w-full bg-emerald-500 hover:bg-emerald-600 transition-colors ${side==='BUY' ? 'ring-2 ring-white/10' : ''} ${invalid ? 'opacity-50 cursor-not-allowed' : ''}`}
         >BUY</button>

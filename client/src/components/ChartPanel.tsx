@@ -28,7 +28,6 @@ export default function ChartPanel() {
   const tf = useAppStore((s) => s.tf);
   const connection = useAppStore((s) => s.connection);
   const markConnection = useAppStore((s) => s.markConnection);
-  const recalc = useAppStore((s) => s.recalc);
   const setLastTickTs = (ts: number) => useAppStore.setState({ lastTickTs: ts });
 
   // Aggregate base 1m candles into 5m/15m
@@ -227,8 +226,7 @@ export default function ChartPanel() {
   useLiveTrades(symbol, ({ price, ts }) => {
     const updated = upsert1m(symbol, price, ts);
     // Update pricing / metrics even if chart series not yet ready
-    setLastPrice(symbol, updated.close);
-    recalc(updated.close);
+  setLastPrice(symbol, updated.close);
     setLastTickTs(Date.now());
     if (connection !== 'connected') markConnection('connected');
     const s = seriesRef.current;
