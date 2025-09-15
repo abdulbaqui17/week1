@@ -32,6 +32,34 @@ export type Position = {
   stop_loss?: number | null;
 };
 
+// --- Helpers to normalize server orders into our local Position shape ---
+type RawServerOrder = any; // (loose) – server shape not strictly typed client-side yet
+
+const normalizeOrderToPosition = (o: RawServerOrder): Position => {
+  if (!o) throw new Error('normalizeOrderToPosition: empty order');
+  const statusRaw = String(o.status || 'open').toLowerCase();
+  const isClosed = statusRaw === 'closed' || statusRaw === 'filled';
+  return {
+    id: String(o.id),
+    symbol: String(o.symbol || '').toUpperCase() as TSymbol,
+    side: String(o.side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+    volume: Number(o.volume ?? o.size ?? 0),
+    entry: Number(o.entry ?? o.entryPrice ?? o.avgPrice ?? o.price ?? 0),
+    leverage: Number(o.leverage ?? 1),
+    status: isClosed ? 'CLOSED' : 'OPEN',
+    take_profit: o.take_profit ?? o.tp ?? null,
+    stop_loss: o.stop_loss ?? o.sl ?? null,
+  };
+};
+
+const upsertById = <T extends { id: string }>(arr: T[] = [], item: T): T[] => {
+  const idx = arr.findIndex(x => x.id === item.id);
+  if (idx === -1) return [item, ...arr];
+  const copy = arr.slice();
+  copy[idx] = { ...copy[idx], ...item };
+  return copy;
+};
+
 type AppState = {
   symbol: TSymbol;
   tf: TF;
@@ -139,7 +167,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       const json = await res.json().catch(() => ({}));
       console.log('[placeOrder] status', res.status, json);
-      if (res.ok) return { ok: true, data: json };
+      if (res.ok) {
+        try {
+          const srvOrder = (json as any)?.order;
+          if (srvOrder && srvOrder.id) {
+            try {
+              const pos = normalizeOrderToPosition(srvOrder);
+              useAppStore.setState(st => ({ positions: upsertById(st.positions, pos) }));
+            } catch (normErr) {
+              console.warn('[placeOrder] normalize error', normErr);
+            }
+          }
+          // Fetch updated account snapshot for accurate free/equity
+          fetch(`${API_BASE}/v1/account`).then(r => r.json().catch(()=>null)).then(snap => {
+            if (snap && typeof snap.balance === 'number') {
+              useAppStore.setState(st => ({
+                balance: snap.balance,
+                equity: snap.equity,
+                usedMargin: snap.marginUsed ?? st.usedMargin,
+                freeMargin: snap.freeMargin ?? st.freeMargin,
+              }));
+            }
+          }).catch(()=>{});
+        } catch (e) { console.warn('[placeOrder] merge error', e); }
+        return { ok: true, data: json };
+      }
       // Capture backend maintenance margin risk details if provided
       try {
         if (json && (json.code === 'MAINT_MARGIN_AT_RISK' || json.code === 'MAINT_MARGIN' )) {
