@@ -1,140 +1,277 @@
-# 🚀 DigitalFortune - Crypto Trading Platform# 🚀 DigitalFortune - Real-Time Crypto Trading Platform
+# 🚀 DigitalFortune - Crypto Trading Platform# 🚀 DigitalFortune - Crypto Trading Platform# 🚀 DigitalFortune - Real-Time Crypto Trading Platform
 
 
 
-<div align="center"><div align="center">
+<div align="center">
 
 
+
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)<div align="center"><div align="center">
+
+![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
+
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)
 
+**Real-time cryptocurrency trading platform with microservices architecture**
+
 ![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
+
+</div>
 
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?logo=node.js&logoColor=white)![Node.js](https://img.shields.io/badge/Node.js-43853D?logo=node.js&logoColor=white)
 
+## ⚡ Quick Start
+
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)
+```bash
 
+git clone https://github.com/abdulbaqui17/DigitalFortune.git![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?logo=postgresql&logoColor=white)
 
+cd DigitalFortune
+
+docker-compose up -d --build
+
+```
 
 **Full-stack real-time cryptocurrency trading platform built with React, TypeScript, and microservices****Full-stack cryptocurrency trading platform with real-time features and microservices architecture**
 
+Visit **http://localhost** → New users get **$5,000** demo balance!
 
+
+
+---
 
 </div></div>
 
+## 🛠️ Built With
+
+
+
+**Frontend**
+
+- React 19 + TypeScript------
+
+- Vite (build tool)
+
+- Tailwind CSS (styling)
+
+- Framer Motion (animations)
+
+- Zustand (state management)## ⚡ Quick Start## ⚡ Quick Start
+
+
+
+**Backend**
+
+- Node.js + Express.js
+
+- TypeScript```bash```bash
+
+- WebSocket (real-time data)
+
+- JWT + bcrypt (auth)git clone https://github.com/abdulbaqui17/DigitalFortune.gitgit clone https://github.com/abdulbaqui17/DigitalFortune.git
+
+
+
+**Database**cd DigitalFortunecd DigitalFortune
+
+- PostgreSQL (users, orders, positions)
+
+- Redis (sessions, cache)docker-compose up -d --builddocker-compose up -d --build
+
+
+
+**DevOps**``````
+
+- Docker + Docker Compose
+
+- Nginx (reverse proxy)
+
+
+
+---Open **http://localhost** → Sign up → Get **$5,000** demo balance → Start trading!Open **http://localhost** - Every new user gets **$5,000** demo balance!
+
+
+
+## ✨ Features
+
+
+
+**Trading Platform**------
+
+- Real-time candlestick charts (1m to 1D)
+
+- Market/limit/stop-loss/take-profit orders
+
+- Up to 100x leverage trading
+
+- Live P&L tracking## ✨ Features## ✨ Key Features
+
+- Automated liquidation engine
+
+- Position management
+
+
+
+**Security & Auth****Trading**### Trading
+
+- JWT token authentication
+
+- bcrypt password encryption- Real-time candlestick charts (1m to 1D timeframes)- Real-time candlestick charts with multiple timeframes
+
+- Protected API routes
+
+- User-isolated trading accounts- Market, limit, stop-loss, take-profit orders- Market, limit, stop-loss, and take-profit orders
+
+
+
+**UI/UX**- Up to 100x leverage with margin tracking- Up to 100x leverage trading
+
+- Animated landing page (20+ floating particles)
+
+- 3D effects with parallax scrolling- Live P&L and position management- Live P&L tracking and position management
+
+- Responsive mobile design
+
+- Real-time balance updates- Automated liquidation system- Automated liquidation engine
+
+
+
+---
+
+
+
+## 🏗️ Architecture**Tech Highlights**### Technical
+
+
+
+```- JWT authentication + bcrypt encryption- JWT authentication with bcrypt password hashing
+
+React Client (Nginx)
+
+      ↓- WebSocket real-time data streaming- WebSocket real-time data streaming
+
+HTTP API + WebSocket + Poller
+
+      ↓- Microservices architecture (6 containers)- Microservices architecture (HTTP, WS, Poller services)
+
+PostgreSQL + Redis
+
+```- PostgreSQL + Redis persistence- PostgreSQL + Redis for data persistence
+
+
+
+**6 Docker Containers:**- Framer Motion landing page animations- Framer Motion animations on landing page
+
+1. **Client** - React SPA
+
+2. **HTTP Server** - REST API, auth, orders- Responsive design with Tailwind CSS
+
+3. **WebSocket** - Real-time price streaming
+
+4. **Poller** - Market data aggregation
+
+5. **PostgreSQL** - Persistent storage
+
+6. **Redis** - Session cache---
+
 
 
 ------
 
 
 
-## ⚡ Quick Start## ⚡ Quick Start
+## 📁 Structure## 🛠️ Tech Stack
 
 
 
-```bash```bash
+```## 🛠️ Tech Stack
 
-git clone https://github.com/abdulbaqui17/DigitalFortune.gitgit clone https://github.com/abdulbaqui17/DigitalFortune.git
+DigitalFortune/
 
-cd DigitalFortunecd DigitalFortune
+├── client/          # React + TypeScript frontend**Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand  
 
-docker-compose up -d --builddocker-compose up -d --build
+├── httpserver/      # Express.js API
 
-``````
+├── wsserver/        # WebSocket server**Backend:** Node.js, Express.js, TypeScript, WebSocket  **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand  
 
+├── poller/          # Market data service
 
+├── db/              # PostgreSQL schemas**Database:** PostgreSQL, Redis  **Backend:** Node.js, Express.js, TypeScript, WebSocket  
 
-Open **http://localhost** → Sign up → Get **$5,000** demo balance → Start trading!Open **http://localhost** - Every new user gets **$5,000** demo balance!
+└── docker-compose.yml
 
-
-
-------
-
-
-
-## ✨ Features## ✨ Key Features
+```**DevOps:** Docker, Docker Compose, Nginx**Database:** PostgreSQL, Redis  
 
 
 
-**Trading**### Trading
-
-- Real-time candlestick charts (1m to 1D timeframes)- Real-time candlestick charts with multiple timeframes
-
-- Market, limit, stop-loss, take-profit orders- Market, limit, stop-loss, and take-profit orders
-
-- Up to 100x leverage with margin tracking- Up to 100x leverage trading
-
-- Live P&L and position management- Live P&L tracking and position management
-
-- Automated liquidation system- Automated liquidation engine
+---**DevOps:** Docker, Docker Compose, Nginx
 
 
 
-**Tech Highlights**### Technical
-
-- JWT authentication + bcrypt encryption- JWT authentication with bcrypt password hashing
-
-- WebSocket real-time data streaming- WebSocket real-time data streaming
-
-- Microservices architecture (6 containers)- Microservices architecture (HTTP, WS, Poller services)
-
-- PostgreSQL + Redis persistence- PostgreSQL + Redis for data persistence
-
-- Framer Motion landing page animations- Framer Motion animations on landing page
-
-- Responsive design with Tailwind CSS
+## 🔧 Development---
 
 
 
----
+```bash## �️ Architecture
 
----
+# Start services
 
-## 🛠️ Tech Stack
+docker-compose up -d## 🏗️ Architecture
 
-## 🛠️ Tech Stack
 
-**Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand  
 
-**Backend:** Node.js, Express.js, TypeScript, WebSocket  **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand  
+# View logsMicroservices setup with 6 Docker containers:
 
-**Database:** PostgreSQL, Redis  **Backend:** Node.js, Express.js, TypeScript, WebSocket  
-
-**DevOps:** Docker, Docker Compose, Nginx**Database:** PostgreSQL, Redis  
-
-**DevOps:** Docker, Docker Compose, Nginx
-
----
-
-## �️ Architecture
-
-## 🏗️ Architecture
-
-Microservices setup with 6 Docker containers:
+docker-compose logs -f
 
 ```- **Client** - React SPA with Nginx
 
-┌─────────────┐- **HTTP Server** - REST API, auth, orders (Express.js)
+# Stop services
+
+docker-compose down┌─────────────┐- **HTTP Server** - REST API, auth, orders (Express.js)
+
+```
 
 │  React SPA  │ (Nginx :80)- **WebSocket Server** - Real-time data streaming
 
+---
+
 └──────┬──────┘- **Poller** - Market data aggregation
+
+## 👨‍💻 Author
 
        │- **PostgreSQL** - User accounts, orders, positions
 
-   ┌───┴────────────┬─────────────┐- **Redis** - Session cache
+**Abdul Baqui**  
 
-   │                │             │
+GitHub: [@abdulbaqui17](https://github.com/abdulbaqui17)   ┌───┴────────────┬─────────────┐- **Redis** - Session cache
 
-┌──▼───────┐  ┌────▼────┐  ┌─────▼─────┐## � Development
 
-│ HTTP API │  │ WebSocket│  │  Poller   │
 
-│ :3001    │  │  :3002  │  │ (Background)│```bash
+---   │                │             │
 
-└────┬─────┘  └────┬────┘  └─────┬─────┘# Start dev environment
+
+
+<div align="center">┌──▼───────┐  ┌────▼────┐  ┌─────▼─────┐## � Development
+
+
+
+**Built with React, TypeScript, Docker & PostgreSQL**│ HTTP API │  │ WebSocket│  │  Poller   │
+
+
+
+⭐ Star this repo if you find it useful!│ :3001    │  │  :3002  │  │ (Background)│```bash
+
+
+
+</div>└────┬─────┘  └────┬────┘  └─────┬─────┘# Start dev environment
+
 
      │             │              │docker-compose up -d
 
