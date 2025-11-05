@@ -52,7 +52,18 @@ const upsertById = <T extends { id: string }>(arr: T[] = [], item: T): T[] => {
   return copy;
 };
 
+type User = {
+  id: number;
+  email: string;
+  balance: number;
+};
+
 type AppState = {
+  // Auth state
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+  
   symbol: TSymbol;
   tf: TF;
   connection: 'connecting' | 'connected' | 'disconnected';
@@ -89,6 +100,13 @@ type AppState = {
   // Server authoritative account snapshot only source of truth
   account: { equity: number; used: number; free: number; maintenance: number | null; upnl: number; level: number };
   isPlacing: boolean;
+  
+  // Auth actions
+  signup(email: string, password: string): Promise<void>;
+  signin(email: string, password: string): Promise<void>;
+  signout(): void;
+  verifyToken(): Promise<void>;
+  
   fetchAccount(): Promise<void>;
   fetchPositions(): Promise<void>;
   closePosition(id: string): void;
@@ -108,6 +126,11 @@ type AppState = {
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
+  // Auth state - initialize from localStorage
+  user: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')!) : null,
+  token: localStorage.getItem('token') || null,
+  isAuthenticated: !!localStorage.getItem('token'),
+  
   symbol: 'BTCUSDT',
   tf: '1m',
   connection: 'disconnected',
@@ -130,9 +153,76 @@ export const useAppStore = create<AppState>((set, get) => ({
   risk: { mm: null, lastFreeMargin: null, lastError: null },
   account: { equity: 0, used: 0, free: 0, maintenance: null, upnl: 0, level: Infinity },
   isPlacing: false,
+  
+  // Auth actions
+  async signup(email: string, password: string) {
+    const res = await fetch(`${API_BASE}/v1/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Signup failed' }));
+      throw new Error(err.error || 'Signup failed');
+    }
+    const data = await res.json();
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    set({ token: data.token, user: data.user, isAuthenticated: true });
+  },
+  
+  async signin(email: string, password: string) {
+    const res = await fetch(`${API_BASE}/v1/signin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Sign in failed' }));
+      throw new Error(err.error || 'Sign in failed');
+    }
+    const data = await res.json();
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    set({ token: data.token, user: data.user, isAuthenticated: true });
+  },
+  
+  signout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    set({ token: null, user: null, isAuthenticated: false, positions: [], balance: 0, equity: 0 });
+  },
+  
+  async verifyToken() {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      set({ token: null, user: null, isAuthenticated: false });
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/v1/verify`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        get().signout();
+        return;
+      }
+      const data = await res.json();
+      localStorage.setItem('user', JSON.stringify(data.user));
+      set({ user: data.user, isAuthenticated: true });
+    } catch {
+      get().signout();
+    }
+  },
+  
   async fetchAccount() {
     try {
-      const res = await fetch(`${API_BASE}/v1/account`);
+      const token = get().token;
+      if (!token) return;
+      
+      const res = await fetch(`${API_BASE}/v1/account`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) return;
       const j = await res.json().catch(()=>({}));
       const equity = Number(j.equity || 0);
@@ -155,7 +245,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   async fetchPositions() {
     try {
-      const res = await fetch(`${API_BASE}/v1/positions`);
+      const token = get().token;
+      if (!token) return;
+      
+      const res = await fetch(`${API_BASE}/v1/positions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) return;
       const j = await res.json().catch(()=>([]));
       const arr = Array.isArray(j) ? j : [];
@@ -172,7 +267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLeverage(l) { if (l < 1) l = 1; if (l > 100) l = 100; set({ leverage: l }); },
   markConnection(x) { set({ connection: x }); },
   updateSymbolPrice(sym: TSymbol, price: number) {
-    set((s) => ({ lastPriceBySymbol: { ...s.lastPriceBySymbol, [sym]: price }, lastPrice: sym === s.symbol ? price : s.lastPrice }));
+    set((s) => ({ lastPriceBySymbol: { ...s.lastPriceBySymbol, [sym]: price }, lastPrice: sym === s.symbol ? price : s.lastPrice, lastTickTs: Date.now() }));
   },
   async placeOrder(p) {
     const s = get();
@@ -194,16 +289,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       leverage: L,
       tp: p.tp ?? (s as any).take_profit ?? undefined,
       sl: p.sl ?? (s as any).stop_loss ?? undefined,
+      // Snapshot from client UI at click
+      clientMark: mark,
+      clientTs: Date.now(),
+      maxSlippageBps: 5,
     };
     set({ isPlacing: true });
     try {
+      const token = get().token;
+      if (!token) {
+        throw new Error('Not authenticated');
+      }
+      
       const res = await fetch(`${API_BASE}/v1/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify(payload),
       });
       const json = await res.json().catch(() => ({}));
-      console.log('[placeOrder] status', res.status, json);
+      console.log('[placeOrder] response:', { 
+        status: res.status, 
+        ok: res.ok,
+        orderId: json?.order?.id,
+        entryPrice: json?.order?.entry,
+        markPrice: json?.order?.mark,
+        symbol: json?.order?.symbol,
+        side: json?.order?.side,
+        volume: json?.order?.volume,
+        clientMark: mark,
+        priceMatch: json?.order?.entry === json?.order?.mark
+      });
       if (res.ok) {
         // Merge order quickly (optimistic) then authoritative refresh will correct if needed
         try {
@@ -216,6 +334,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         // Clear last error on success
         useAppStore.setState(st => ({ risk: { ...st.risk, lastError: null } }));
         return { ok: true, data: json };
+      }
+      // Handle slippage/stale codes gracefully
+      if (json && (json.code === 'SLIPPAGE_EXCEEDED' || json.code === 'PRICE_STALE')) {
+        try { const { addToast } = await import('../lib/toast');
+          if (json.code === 'SLIPPAGE_EXCEEDED') {
+            const bps = Number(json?.details?.bps);
+            addToast({ id: 'slip', title: 'Slippage too high', body: Number.isFinite(bps) ? `${bps.toFixed(2)} bps > limit` : undefined, tone: 'error' });
+          } else {
+            addToast({ id: 'stale', title: 'Price stale', body: 'Waiting for fresh tick…', tone: 'info' });
+          }
+        } catch {}
       }
       // Capture backend maintenance margin risk details if provided
       try {
@@ -245,7 +374,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Use server endpoint for authoritative close
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/v1/orders/${id}/close`, { method: 'POST' });
+        const token = get().token;
+        if (!token) {
+          console.error('Not authenticated');
+          return;
+        }
+        
+        const res = await fetch(`${API_BASE}/v1/orders/${id}/close`, { 
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
         const j = await res.json().catch(()=>({}));
         if (res.ok) {
           // Refresh account & positions

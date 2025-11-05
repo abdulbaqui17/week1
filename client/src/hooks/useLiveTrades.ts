@@ -1,4 +1,4 @@
-// Clean implementation of Binance live trades hook
+// Live trades hook that prefers backend wsserver (authoritative) and falls back to Binance
 import { useEffect, useRef } from 'react';
 import { useAppStore, type TSymbol } from '../store/app';
 
@@ -8,8 +8,9 @@ const BINANCE_STREAM_URL = 'wss://stream.binance.com:9443/stream?streams=btcusdt
 
 type Sub = (t: Tick) => void;
 const subs: Record<TSymbol, Set<Sub>> = { BTCUSDT: new Set(), ETHUSDT: new Set(), SOLUSDT: new Set() };
-let socket: WebSocket | null = null;
+let socket: WebSocket | null = null; // backend wsserver socket
 let connecting = false;
+let binanceSocket: WebSocket | null = null;
 
 // Throttled (100ms) latest-tick dispatch per symbol
 const THROTTLE_MS = 100;
@@ -48,24 +49,77 @@ function scheduleFlush() {
   }, wait);
 }
 
-function initSocket(mark: (c: any) => void) {
+function resolveBackendWsUrl(): string | null {
+  const env = (import.meta as any)?.env?.VITE_WS_URL as string | undefined;
+  if (env && typeof env === 'string') return env;
+  if (typeof window === 'undefined') return null;
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const origin = window.location.host; // host:port
+  return `${proto}://${origin}/ws/`;
+}
+
+function startBackendWs(mark: (c: any) => void) {
   if (socket || connecting) return;
+  const url = resolveBackendWsUrl();
+  if (!url) { startBinanceWs(mark); return; }
   connecting = true;
   mark('connecting');
-  socket = new WebSocket(BINANCE_STREAM_URL);
+  try {
+    socket = new WebSocket(url);
+  } catch {
+    connecting = false;
+    startBinanceWs(mark);
+    return;
+  }
   socket.onopen = () => { connecting = false; mark('connected'); };
-  socket.onclose = () => { mark('disconnected'); socket = null; setTimeout(() => initSocket(mark), 1000); };
+  socket.onclose = () => {
+    mark('disconnected');
+    socket = null;
+    setTimeout(() => startBackendWs(mark), 1500);
+  };
   socket.onerror = () => { try { socket?.close(); } catch {} };
   socket.onmessage = (ev) => {
     try {
       const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
+      // Expect poller -> redis -> wsserver broadcast format: { timestamp, asset, price, quantity }
+      const symRaw = (msg?.asset || msg?.symbol || msg?.s) as string | undefined;
+      if (!symRaw) return;
+      const sym = symRaw.toUpperCase();
+      if (sym !== 'BTCUSDT' && sym !== 'ETHUSDT' && sym !== 'SOLUSDT') return;
+      const priceNum = Number(msg?.price ?? msg?.p ?? NaN);
+      if (!isFinite(priceNum)) return;
+      let ts = Number(msg?.timestamp ?? msg?.ts ?? Date.now());
+      if (!ts || !isFinite(ts)) ts = Date.now();
+      // normalize sec -> ms
+      if (ts < 1_000_000_000_000) ts *= 1000;
+      latest[sym as TSymbol] = { price: priceNum, ts };
+      scheduleFlush();
+    } catch {}
+  };
+}
+
+function startBinanceWs(mark: (c: any) => void) {
+  try { if (binanceSocket) return; } catch {}
+  try { if (socket) return; } catch {}
+  try {
+    binanceSocket = new WebSocket(BINANCE_STREAM_URL);
+  } catch {
+    return;
+  }
+  mark('connecting');
+  binanceSocket.onopen = () => { mark('connected'); };
+  binanceSocket.onclose = () => { mark('disconnected'); binanceSocket = null; setTimeout(() => startBinanceWs(mark), 1500); };
+  binanceSocket.onerror = () => { try { binanceSocket?.close(); } catch {} };
+  binanceSocket.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
       const d = msg?.data; if (!d) return;
       const sym = (d.s as string | undefined)?.toUpperCase();
-      const pStr = d.p as string | undefined; const ts = typeof d.T === 'number' ? d.T : Date.now();
+      const pStr = d.p as string | undefined; const t = typeof d.T === 'number' ? d.T : Date.now();
       if (!sym || !pStr) return; if (sym !== 'BTCUSDT' && sym !== 'ETHUSDT' && sym !== 'SOLUSDT') return;
-  const price = Number(pStr); if (!isFinite(price)) return;
-  latest[sym as TSymbol] = { price, ts };
-  scheduleFlush();
+      const price = Number(pStr); if (!isFinite(price)) return;
+      latest[sym as TSymbol] = { price, ts: t };
+      scheduleFlush();
     } catch {}
   };
 }
@@ -99,7 +153,7 @@ export function useLiveTrades(symbol: TSymbol, onTrade: (t: Tick) => void) {
   const updateSymbolPrice = useAppStore(s => s.updateSymbolPrice);
   const hydrated = useRef(false);
 
-  useEffect(() => { initSocket(markConnection); ensureFallbackPoller(); }, [markConnection]);
+  useEffect(() => { startBackendWs(markConnection); ensureFallbackPoller(); }, [markConnection]);
 
   useEffect(() => {
     if (hydrated.current) return; hydrated.current = true;
@@ -113,11 +167,28 @@ export function useLiveTrades(symbol: TSymbol, onTrade: (t: Tick) => void) {
     })();
   }, [updateSymbolPrice]);
 
+  // Subscribe to ALL symbols to keep positions updated regardless of active chart
   useEffect(() => {
-    const setRef = subs[symbol];
-    if (!setRef) { console.warn('[useLiveTrades] Attempted subscribe to unknown symbol', symbol); return; }
-    const handler: Sub = (t) => { updateSymbolPrice(symbol, t.price); onTrade(t); };
-    setRef.add(handler);
-    return () => { setRef.delete(handler); };
+    const handlers: Map<TSymbol, Sub> = new Map();
+    
+    // Subscribe to all symbols
+    (['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] as TSymbol[]).forEach(sym => {
+      const handler: Sub = (t) => { 
+        updateSymbolPrice(sym, t.price);
+        // Only call onTrade callback for the active symbol
+        if (sym === symbol) {
+          onTrade(t);
+        }
+      };
+      subs[sym]?.add(handler);
+      handlers.set(sym, handler);
+    });
+
+    // Cleanup: unsubscribe from all
+    return () => {
+      handlers.forEach((handler, sym) => {
+        subs[sym]?.delete(handler);
+      });
+    };
   }, [symbol, onTrade, updateSymbolPrice]);
 }

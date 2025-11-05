@@ -134,7 +134,12 @@ ws.on("message", async (event) => {
                     JSON.stringify({ timestamp: ts.toISOString(), asset, price, quantity })
                 );
                 // Persist latest price for quick lookups by API
-                await publisher.set(`price:last:${asset.toUpperCase()}`, String(price));
+                const sym = asset.toUpperCase();
+                const ms = ts.getTime();
+                await publisher.mSet({
+                    [`price:last:${sym}`]: String(price),
+                    [`price:last:${sym}:ts`]: String(ms),
+                });
             } catch (e) {
                 console.error('[poller] redis publish/set error', e);
             }

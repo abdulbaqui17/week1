@@ -1,0 +1,147 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ORDER PRICE MATCHING FLOW                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐
+│   Client UI  │
+│ (OrderPanel) │
+└──────┬───────┘
+       │
+       │ 1. Shows Current Market Price
+       │    ┌────────────────────────────┐
+       │    │  Market Price: $67,832.45  │
+       │    │  Entry at market price     │
+       │    └────────────────────────────┘
+       │
+       │ 2. User Clicks BUY/SELL
+       │    • Captures: currentPrice = $67,832.45
+       │    • Validates: price > 0
+       │    • Checks: volume, leverage valid
+       │
+       ▼
+┌──────────────────┐
+│  placeOrder()    │
+│  (store/app.ts)  │
+└──────┬───────────┘
+       │
+       │ 3. Sends API Request
+       │    POST /api/v1/orders
+       │    {
+       │      symbol: "BTCUSDT",
+       │      side: "BUY",
+       │      qtyUnits: 0.01,
+       │      leverage: 10,
+       │      clientMark: 67832.45,  ← Client's price snapshot
+       │      clientTs: 1729959600000,
+       │      maxSlippageBps: 5
+       │    }
+       │
+       ▼
+┌──────────────────────┐
+│   Backend Server     │
+│ (httpserver/index.ts)│
+└──────┬───────────────┘
+       │
+       │ 4. Fetches Fresh Price from Redis
+       │    • mark = 67832.45 (from live feed)
+       │    • markTs = 1729959600050
+       │
+       │ 5. Price Validations
+       │    ✓ Price available?
+       │    ✓ Price fresh? (< 1.5s old)
+       │    ✓ Slippage OK? (|mark - clientMark| < 5 bps)
+       │
+       │ 6. Sets Entry Price = Current Market Price
+       │    entryPrice = mark  (NO ROUNDING)
+       │    entryPrice = 67832.45
+       │
+       │ 7. Creates Order
+       │    {
+       │      id: "1729959600-abc123",
+       │      entry: 67832.45,    ← MATCHES EXACTLY
+       │      mark: 67832.45,     ← MATCHES EXACTLY
+       │      priceMatch: true,   ← ✓ Verified
+       │      symbol: "BTCUSDT",
+       │      side: "BUY",
+       │      volume: 0.01,
+       │      leverage: 10,
+       │      status: "open"
+       │    }
+       │
+       │ 8. Logs Confirmation
+       │    [placeOrder] SUCCESS {
+       │      entryPrice: 67832.45,
+       │      currentMarketPrice: 67832.45,
+       │      priceMatch: true ✓
+       │    }
+       │
+       ▼
+┌──────────────────────┐
+│  Response to Client  │
+└──────┬───────────────┘
+       │
+       │ 9. Returns Order + Account
+       │    {
+       │      ok: true,
+       │      order: { id, entry: 67832.45, ... },
+       │      account: { equity, free, used, ... }
+       │    }
+       │
+       ▼
+┌──────────────────────┐
+│   Client Receives    │
+└──────┬───────────────┘
+       │
+       │ 10. Shows Success Toast
+       │     "BUY 0.01 BTCUSDT @ $67,832.45"
+       │
+       │ 11. Updates Positions
+       │     ┌────────────────────────────────────┐
+       │     │ Symbol  │ Type │ Open Price        │
+       │     │ BTC/USD │ Buy  │ $67,832.45 ← ✓   │
+       │     └────────────────────────────────────┘
+       │
+       │ 12. Logs Verification
+       │     [placeOrder] response: {
+       │       entryPrice: 67832.45,
+       │       markPrice: 67832.45,
+       │       priceMatch: true ✓
+       │     }
+       │
+       ▼
+┌──────────────────────┐
+│   Position Open!     │
+│  Price Guaranteed    │
+└──────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         PRICE MATCHING GUARANTEES                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ✓ Entry Price = Current Market Price (exact match, no rounding)       │
+│  ✓ Price freshness enforced (< 1.5 seconds)                            │
+│  ✓ Slippage protection (< 5 bps from client snapshot)                  │
+│  ✓ Full precision preserved (no decimal truncation)                    │
+│  ✓ Logged and verified on both client and server                       │
+│  ✓ Displayed to user in success confirmation                           │
+│  ✓ Visible in positions panel for reference                            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          PnL CALCULATION                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  BUY Position:                                                          │
+│    PnL = (Current Price - Entry Price) × Volume                        │
+│    PnL = (67,900.00 - 67,832.45) × 0.01                               │
+│    PnL = $0.68                                                          │
+│                                                                         │
+│  SELL Position:                                                         │
+│    PnL = (Entry Price - Current Price) × Volume                        │
+│    PnL = (67,832.45 - 67,900.00) × 0.01                               │
+│    PnL = -$0.68                                                         │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘

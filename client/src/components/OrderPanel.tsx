@@ -31,7 +31,7 @@ export default function OrderPanel() {
   const posted = required;
   const effective = notional;
   const insufficientFree = required > freeMargin; // now non-blocking
-  const invalid = volume <= 0 || Number.isNaN(tradePrice) || (mode === 'LIMIT' && (price == null || price <= 0)); // margin no longer blocks
+  const invalid = volume <= 0 || Number.isNaN(tradePrice) || (mode === 'LIMIT' && (price == null || price <= 0)) || lastPrice <= 0; // margin no longer blocks, but require valid price
   const [tpOpen, setTpOpen] = useState(false);
   const [slOpen, setSlOpen] = useState(false);
   const [tpVal, setTpVal] = useState<string>('');
@@ -107,22 +107,54 @@ export default function OrderPanel() {
     if (now - clickGuard.current < 400) return; // debounce 400ms
     clickGuard.current = now;
     if (isPlacing) return;
-  const payloadPreview = { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, leverage };
+    
+    // Get fresh price at order submission
+    const currentPrice = lastPriceBySymbol[symbol] ?? 0;
+    if (currentPrice <= 0) {
+      try {
+        const { addToast } = await import('../lib/toast');
+        addToast({ id: 'no-price', title: 'No price available', body: `Waiting for ${symbol} price data...`, tone: 'error' });
+      } catch {}
+      return;
+    }
+    
+  const payloadPreview = { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, leverage, currentPrice };
     try { console.debug('[OrderPanel] submit', chosen, 'API_BASE=', API_BASE, 'payload=', payloadPreview); } catch {}
     setSide(chosen);
     commitVolume();
-    if (invalid || volErr) { try { console.warn('[OrderPanel] blocked by invalid/volErr', { invalid, volErr }); } catch {} }
+    if (invalid || volErr) { try { console.warn('[OrderPanel] blocked by invalid/volErr', { invalid, volErr }); } catch {} return; }
     const gated = maybeGate();
-    if (gated) { try { console.warn('[OrderPanel] gated (should not happen)'); } catch {} }
+    if (gated) { try { console.warn('[OrderPanel] gated (should not happen)'); } catch {} return; }
     const take_profit = tpVal ? Number(tpVal) : null;
     const stop_loss = slVal ? Number(slVal) : null;
     useAppStore.setState(s => ({ ...s, take_profit, stop_loss }));
-  try { console.log('[ORDER] payload', { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, tp: take_profit, sl: stop_loss, leverage }); } catch {}
+  try { console.log('[ORDER] payload', { symbol, side: chosen, mode: 'UNITS', qtyUnits: volume, tp: take_profit, sl: stop_loss, leverage, currentPrice }); } catch {}
   const res = await placeOrderStore({ symbol, side: chosen, qtyUnits: volume, leverage, tp: take_profit, sl: stop_loss });
     try { console.debug('[OrderPanel] placeOrder result', res); } catch {}
     if (!res.ok) {
-      // eslint-disable-next-line no-alert
-      alert(String(res.error || 'Order failed'));
+      try {
+        const { addToast } = await import('../lib/toast');
+        const msg = String(res.error || 'Order failed');
+        const code = (res.error || '').toString();
+        if (code.includes('SLIPPAGE') || code.includes('STALE')) {
+          addToast({ id: 'order-err', title: 'Order rejected', body: msg, tone: 'error' });
+        } else {
+          addToast({ id: 'order-err', title: 'Order failed', body: msg, tone: 'error' });
+        }
+      } catch {}
+    } else {
+      // Success toast with price confirmation
+      try {
+        const { addToast } = await import('../lib/toast');
+        const orderData = (res.data as any)?.order;
+        const entryPrice = orderData?.entry ?? currentPrice;
+        addToast({ 
+          id: 'order-success', 
+          title: 'Order placed', 
+          body: `${chosen} ${volume} ${symbol} @ $${entryPrice.toFixed(2)}`, 
+          tone: 'success' 
+        });
+      } catch {}
     }
   }
 
@@ -130,6 +162,19 @@ export default function OrderPanel() {
   <aside className="w-[20rem] p-3 border-l border-slate-800 bg-slate-950 flex flex-col text-[13px] leading-snug">
       {/* Title */}
       <div className="text-base font-semibold mb-2 tracking-tight">{symbol.replace('USD','')}</div>
+
+      {/* Current Market Price Display */}
+      <div className="mb-3 p-2 rounded-md bg-slate-900/60 border border-slate-700">
+        <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Market Price</div>
+        <div className="text-lg font-bold text-emerald-400">
+          ${lastPrice > 0 ? lastPrice.toFixed(2) : '---'}
+        </div>
+        {lastPrice > 0 && (
+          <div className="text-[10px] text-slate-500 mt-0.5">
+            Entry will execute at current market price
+          </div>
+        )}
+      </div>
 
       {/* Top BUY/SELL segmented */}
     <div className="grid grid-cols-2 gap-2 mb-2">

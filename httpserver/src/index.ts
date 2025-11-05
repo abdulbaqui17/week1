@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
+import bcrypt from 'bcrypt';
+import { authMiddleware, generateToken, type AuthRequest } from './middleware/auth.js';
 import { fmtUSD, MONEY_SCALE, scaleMoney, formatMoneyScaled } from './lib/money.js';
 import { validateOrderRisk } from './lib/risk.js';
 import type { Account as MAccount, Position as MPosition, Side as MSide } from './engine/margin.js';
@@ -124,6 +126,190 @@ function pruneClosedOrders<T extends { status?: string; closedAt?: string; creat
     .sort((a, b) => ts(b) - ts(a))
     .slice(0, maxClosed);
   return [...open, ...closed];
+}
+
+// ============ AUTH ENDPOINTS ============
+app.post('/api/v1/signup', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    // Check if user exists
+    const checkQuery = 'SELECT id FROM users WHERE email = $1';
+    const existing = await pool.query(checkQuery, [email]);
+    
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+    
+    // Hash password and create user
+    const passwordHash = await bcrypt.hash(password, 10);
+    const insertQuery = `
+      INSERT INTO users (email, password_hash, balance)
+      VALUES ($1, $2, $3)
+      RETURNING id, email, balance, created_at
+    `;
+    const result = await pool.query(insertQuery, [email, passwordHash, 5000]);
+    const user = result.rows[0];
+    
+    // Generate token
+    const token = generateToken(user.id, user.email);
+    
+    console.log(`[auth] User registered: ${email} (id: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        balance: Number(user.balance),
+        createdAt: user.created_at,
+      },
+    });
+  } catch (e) {
+    console.error('[auth] signup error:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/v1/signin', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    // Find user
+    const query = 'SELECT id, email, password_hash, balance FROM users WHERE email = $1';
+    const result = await pool.query(query, [email]);
+    
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Verify password
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    // Generate token
+    const token = generateToken(user.id, user.email);
+    
+    console.log(`[auth] User signed in: ${email} (id: ${user.id})`);
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        balance: Number(user.balance),
+      },
+    });
+  } catch (e) {
+    console.error('[auth] signin error:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/v1/verify', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const query = 'SELECT id, email, balance, created_at FROM users WHERE id = $1';
+    const result = await pool.query(query, [req.userId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = result.rows[0];
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        balance: Number(user.balance),
+        createdAt: user.created_at,
+      },
+    });
+  } catch (e) {
+    console.error('[auth] verify error:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============ TRADING ENDPOINTS ============
+
+// Helper functions for user-specific operations
+async function getUserBalance(userId: number): Promise<number> {
+  const result = await pool.query('SELECT balance FROM users WHERE id = $1', [userId]);
+  return result.rows.length > 0 ? Number(result.rows[0].balance) : 0;
+}
+
+async function updateUserBalance(userId: number, newBalance: number): Promise<void> {
+  await pool.query('UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, userId]);
+}
+
+async function getUserOrders(userId: number): Promise<any[]> {
+  const result = await pool.query(
+    'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
+    [userId]
+  );
+  return result.rows.map(row => ({
+    id: row.id,
+    symbol: row.symbol,
+    side: row.side,
+    volume: Number(row.volume),
+    entry: Number(row.entry_price),
+    entryPrice: Number(row.entry_price),
+    leverage: Number(row.leverage),
+    status: row.status,
+    closePrice: row.close_price ? Number(row.close_price) : undefined,
+    closedAt: row.closed_at ? row.closed_at.toISOString() : undefined,
+    realizedPnl: row.realized_pnl ? Number(row.realized_pnl) : undefined,
+    take_profit: row.take_profit ? Number(row.take_profit) : null,
+    stop_loss: row.stop_loss ? Number(row.stop_loss) : null,
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+async function createUserOrder(userId: number, order: any): Promise<void> {
+  await pool.query(
+    `INSERT INTO orders (id, user_id, symbol, side, volume, entry_price, leverage, status, take_profit, stop_loss, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+    [
+      order.id,
+      userId,
+      order.symbol,
+      order.side,
+      order.volume,
+      order.entry,
+      order.leverage,
+      'OPEN',
+      order.take_profit || null,
+      order.stop_loss || null,
+    ]
+  );
+}
+
+async function updateUserOrder(userId: number, orderId: string, updates: any): Promise<void> {
+  const { status, closePrice, realizedPnl } = updates;
+  await pool.query(
+    `UPDATE orders 
+     SET status = COALESCE($1, status), 
+         close_price = COALESCE($2, close_price),
+         closed_at = CASE WHEN $1 IN ('CLOSED', 'LIQUIDATED') THEN NOW() ELSE closed_at END,
+         realized_pnl = COALESCE($3, realized_pnl),
+         updated_at = NOW()
+     WHERE id = $4 AND user_id = $5`,
+    [status, closePrice, realizedPnl, orderId, userId]
+  );
 }
 
 app.get('/api/v1/candles', async (req, res) => {
@@ -308,13 +494,43 @@ async function computeAccountSnapshot() {
   return { balance, equity, freeMargin, marginUsed: fmtUSD(marginUsed), marginLevelPct, leverage };
 }
 
-app.get('/api/v1/account', async (_req, res) => {
+app.get('/api/v1/account', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    await initDemo();
-    const prices = await gatherPrices();
-    const snap = await computeSnapshot(redis, prices);
-    await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
-    return res.json(snap);
+    if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const balance = await getUserBalance(req.userId);
+    const orders = await getUserOrders(req.userId);
+    const leverage = 100; // Default leverage
+    
+    // Calculate unrealized PnL and margin
+    let unrealized = 0;
+    let marginUsed = 0;
+    const openOrders = orders.filter(o => o.status === 'OPEN');
+    
+    for (const order of openOrders) {
+      const currentPrice = await getLatestPriceForSymbol(order.symbol);
+      if (currentPrice) {
+        const isBuy = order.side === 'BUY';
+        const pnl = (isBuy ? (currentPrice - order.entry) : (order.entry - currentPrice)) * order.volume;
+        unrealized += pnl;
+        marginUsed += (order.entry * order.volume) / order.leverage;
+      }
+    }
+    
+    const equity = balance + unrealized;
+    const freeMargin = balance - marginUsed;
+    const marginLevelPct = marginUsed > 0 ? (equity / marginUsed) * 100 : null;
+    
+    return res.json({
+      balance: Number(balance.toFixed(2)),
+      equity: Number(equity.toFixed(2)),
+      free: Number(freeMargin.toFixed(2)),
+      used: Number(marginUsed.toFixed(2)),
+      upnl: Number(unrealized.toFixed(2)),
+      level: marginLevelPct,
+      maintenance: null,
+      leverage,
+    });
   } catch (e) {
     console.error('[api] /api/v1/account error:', e);
     return res.status(500).json({ error: 'internal_error' });
@@ -334,10 +550,11 @@ async function gatherPrices(): Promise<Record<string, number>> {
   return prices;
 }
 
-app.get('/api/v1/positions', async (_req, res) => {
+app.get('/api/v1/positions', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    await initDemo();
-    const orders = await listOrders<any>();
+    if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const orders = await getUserOrders(req.userId);
     return res.json(orders);
   } catch (e) {
     console.error('[api] /api/v1/positions error:', e);
@@ -380,15 +597,12 @@ app.post('/api/v1/leverage', async (req, res) => {
 });
 
 // --- Orders ---
-app.get('/api/v1/orders', async (_req, res) => {
+app.get('/api/v1/orders', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    await initDemo();
-    const orders = await listOrders<any>();
+    if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
+    
+    const orders = await getUserOrders(req.userId);
     const pruned = pruneClosedOrders(orders, 5);
-    // Persist pruned list so storage doesn't grow with old closed orders
-    if (JSON.stringify(pruned) !== JSON.stringify(orders)) {
-      await redis.set(KEY_ORDERS, JSON.stringify(pruned));
-    }
     return res.json({ orders: pruned });
   } catch (e) {
     console.error('[api] /api/v1/orders GET error:', e);
@@ -396,9 +610,10 @@ app.get('/api/v1/orders', async (_req, res) => {
   }
 });
 
-app.post('/api/v1/orders', async (req, res) => {
+app.post('/api/v1/orders', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    await initDemo();
+    if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
+    
     const body = req.body as any || {};
     // Contract validation
     const rawSymbol = String(body.symbol || '').trim();
@@ -418,8 +633,85 @@ app.post('/api/v1/orders', async (req, res) => {
       // Will recompute notional from mark and compare
     }
     const symbol = ensureUsdt(rawSymbol);
-    const mark = await getLatestPriceForSymbol(symbol);
-    if (!Number.isFinite(mark as number) || !(mark as number > 0)) return res.status(503).json({ error: 'PRICE_UNAVAILABLE', symbol });
+    // Strict freeze from Redis and enforce freshness
+    let mark: number | undefined; let markTs: number | undefined;
+    try {
+      if (!redis.isOpen) await redis.connect();
+      const [mStr, tStr] = await redis.mGet([`price:last:${symbol}`, `price:last:${symbol}:ts`]);
+      const m = Number(mStr); const t = Number(tStr);
+      if (Number.isFinite(m) && m > 0) mark = m;
+      if (Number.isFinite(t) && t > 0) markTs = t;
+    } catch {}
+    
+    // Client price snapshot - use if available and fresh
+    const clientMark = Number((req.body as any)?.clientMark);
+    const clientTs = Number((req.body as any)?.clientTs);
+    const maxSlippageBps = Number((req.body as any)?.maxSlippageBps ?? 5);
+    
+    // Production validation: Sanity check on prices to prevent erroneous orders
+    const MIN_PRICE: Record<string, number> = {
+      'BTCUSDT': 10000,   // BTC should be > $10k
+      'ETHUSDT': 100,     // ETH should be > $100
+      'SOLUSDT': 1        // SOL should be > $1
+    };
+    const MAX_PRICE: Record<string, number> = {
+      'BTCUSDT': 1000000,  // BTC should be < $1M
+      'ETHUSDT': 100000,   // ETH should be < $100k
+      'SOLUSDT': 10000     // SOL should be < $10k
+    };
+    
+    // If client provided a price and it's fresh (< 3 seconds old), validate and potentially use it
+    if (Number.isFinite(clientMark) && clientMark > 0 && Number.isFinite(clientTs) && clientTs > 0) {
+      const clientAge = Date.now() - clientTs;
+      
+      // Sanity check client price
+      const minPrice = MIN_PRICE[symbol] || 0.01;
+      const maxPrice = MAX_PRICE[symbol] || 1000000;
+      if (clientMark < minPrice || clientMark > maxPrice) {
+        console.error('[placeOrder] Client price out of bounds', { symbol, clientMark, minPrice, maxPrice });
+        return res.status(400).json({ 
+          code: 'INVALID_PRICE', 
+          message: `Price ${clientMark} is outside valid range [${minPrice}, ${maxPrice}]`,
+          details: { clientMark, minPrice, maxPrice }
+        });
+      }
+      
+      // If we have a Redis price, validate against it
+      if (Number.isFinite(mark as number) && mark! > 0) {
+        // Sanity check Redis price
+        if (mark! < minPrice || mark! > maxPrice) {
+          console.error('[placeOrder] Redis price out of bounds', { symbol, mark, minPrice, maxPrice });
+          // Don't reject, but use client price if valid
+          if (clientAge < 3000) {
+            console.log('[placeOrder] Using client price (Redis invalid)', { clientMark, redisMark: mark, clientAge });
+            mark = clientMark;
+            markTs = clientTs;
+          }
+        } else {
+          const bps = Math.abs((mark! - clientMark) / clientMark) * 1e4;
+          
+          // If client price is fresher and within tolerance, use client price
+          if (clientAge < 3000 && bps <= maxSlippageBps) {
+            console.log('[placeOrder] Using client price', { symbol, clientMark, redisMark: mark, bps: bps.toFixed(2), clientAge });
+            mark = clientMark;  // Use the fresher client price
+            markTs = clientTs;
+          } else if (bps > maxSlippageBps) {
+            return res.status(409).json({ code: 'SLIPPAGE_EXCEEDED', details: { mark, markTs, clientMark, clientTs, bps: Number(bps.toFixed(2)) } });
+          }
+        }
+      } else {
+        // No Redis price available, use client price if fresh
+        if (clientAge < 3000) {
+          console.log('[placeOrder] No Redis price, using client price', { symbol, clientMark, clientAge });
+          mark = clientMark;
+          markTs = clientTs;
+        }
+      }
+    }
+    
+    // Final validation
+    if (!Number.isFinite(mark as number) || !Number.isFinite(markTs as number)) return res.status(503).json({ code: 'PRICE_UNAVAILABLE', symbol });
+    if (Date.now() - (markTs as number) > 5000) return res.status(503).json({ code: 'PRICE_STALE', symbol, details: { mark, markTs } });
     const qtyUnits = mode === 'UNITS' ? Number(body.qtyUnits) : (Number(body.notionalUsd) / (mark as number));
     if (!(qtyUnits > 0)) return res.status(422).json({ error: 'UNITS_COMPUTE_FAILED' });
     // Optional consistency if both present
@@ -429,16 +721,38 @@ app.post('/api/v1/orders', async (req, res) => {
     }
     const notional = Math.abs(qtyUnits) * (mark as number);
     const initMargin = notional / L;
-    // Current free from snapshot
-    const prices = await gatherPrices();
-    const snapBefore = await computeSnapshot(redis, prices);
-    const freeBefore = snapBefore.free;
+    
+    // Get user balance and calculate free margin
+    const userBalance = await getUserBalance(req.userId!);
+    const userOrders = await getUserOrders(req.userId!);
+    
+    let marginUsed = 0;
+    let unrealizedPnl = 0;
+    
+    for (const existingOrder of userOrders.filter(o => o.status === 'OPEN')) {
+      const currentPrice = await getLatestPriceForSymbol(existingOrder.symbol);
+      if (currentPrice) {
+        const isBuy = existingOrder.side === 'BUY';
+        const pnl = (isBuy ? (currentPrice - existingOrder.entry) : (existingOrder.entry - currentPrice)) * existingOrder.volume;
+        unrealizedPnl += pnl;
+        marginUsed += (existingOrder.entry * existingOrder.volume) / existingOrder.leverage;
+      }
+    }
+    
+    const equity = userBalance + unrealizedPnl;
+    const freeBefore = equity - marginUsed;
+    
     if (freeBefore < initMargin) {
       return res.status(400).json({ error: 'INSUFFICIENT_FREE_MARGIN', free: Number(freeBefore.toFixed(2)), required: Number(initMargin.toFixed(2)), details: { notional: Number(notional.toFixed(2)), leverage: L, units: Number(qtyUnits.toFixed(8)), mark } });
     }
     const tpRaw = body.tp; const slRaw = body.sl;
     const tp = tpRaw != null && tpRaw !== '' ? Number(tpRaw) : undefined;
     const sl = slRaw != null && slRaw !== '' ? Number(slRaw) : undefined;
+    
+    // Entry price is the exact current market price (mark)
+    // No rounding to ensure exact match between order entry and current price
+    const entryPrice = mark as number;
+    
     const order = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
       createdAt: new Date().toISOString(),
@@ -446,7 +760,10 @@ app.post('/api/v1/orders', async (req, res) => {
       side: rawSide,
       type: 'market' as const,
       volume: qtyUnits, // store exact user units
-      entry: mark,
+      units: qtyUnits,  // Also store as units for consistency
+      entry: entryPrice, // Exact current market price
+      mark: mark, // Store the mark price for reference
+      markTs: markTs,
       requiredMargin: initMargin,
       leverage: L,
       status: 'open' as const,
@@ -456,15 +773,73 @@ app.post('/api/v1/orders', async (req, res) => {
       stop_loss: Number.isFinite(sl as number) ? sl : undefined,
       mode,
     };
-  await pushOrder(order);
-  // After placing order run strict liquidation then snapshot
-  const pricesAfter = await gatherPrices();
-  await checkLiquidations(redis, pricesAfter);
-  const snapAfter = await computeSnapshot(redis, pricesAfter);
-  await redis.set(KEY_SNAPSHOT, JSON.stringify(snapAfter));
-    try { console.log('[placeOrder]', { mode, units: qtyUnits, notional, leverage: L, initMargin, freeBefore, mark, id: order.id }); } catch {}
+    
+    // Save order to database
+    await createUserOrder(req.userId!, order);
+  
+    // Log the order right after saving
+    try {
+      console.log('[placeOrder] Order saved:', {
+        id: order.id,
+        userId: req.userId,
+        entry: order.entry,
+        mark: order.mark,
+        volume: order.volume,
+        units: order.units,
+        symbol: order.symbol
+      });
+    } catch {}
+  
+    // Enhanced logging with price confirmation
+    try { 
+      console.log('[placeOrder] SUCCESS', { 
+        id: order.id,
+        userId: req.userId,
+        symbol,
+        side: rawSide,
+        mode, 
+        units: qtyUnits, 
+        entryPrice: entryPrice,
+        currentMarketPrice: mark,
+        priceMatch: entryPrice === mark,
+        notional, 
+        leverage: L, 
+        initMargin, 
+        freeBefore,
+        markTs,
+        tp: order.tp,
+        sl: order.sl
+      });
+    } catch {}
+    
+    // Calculate updated account info
+    const updatedBalance = await getUserBalance(req.userId!);
+    const updatedOrders = await getUserOrders(req.userId!);
+    let updatedMarginUsed = 0;
+    let updatedUnrealized = 0;
+    
+    for (const o of updatedOrders.filter(o => o.status === 'OPEN')) {
+      const currentPrice = await getLatestPriceForSymbol(o.symbol);
+      if (currentPrice) {
+        const isBuy = o.side === 'BUY';
+        const pnl = (isBuy ? (currentPrice - o.entry) : (o.entry - currentPrice)) * o.volume;
+        updatedUnrealized += pnl;
+        updatedMarginUsed += (o.entry * o.volume) / o.leverage;
+      }
+    }
+    
+    const updatedEquity = updatedBalance + updatedUnrealized;
+    const updatedFree = updatedEquity - updatedMarginUsed;
+    
+    const accountAfter = {
+      balance: Number(updatedBalance.toFixed(2)),
+      equity: Number(updatedEquity.toFixed(2)),
+      freeMargin: Number(updatedFree.toFixed(2)),
+      marginUsed: Number(updatedMarginUsed.toFixed(2)),
+    };
+    
     try { if (!redis.isOpen) await redis.connect(); await redis.publish('orders', JSON.stringify({ event: 'order:placed', order })); } catch {}
-    return res.json({ ok: true, order, account: snapAfter });
+    return res.json({ ok: true, order, account: accountAfter });
   } catch (e) {
     console.error('[api] /api/v1/orders POST error:', e);
     return res.status(500).json({ error: 'internal_error' });
@@ -477,24 +852,23 @@ startSlTpWatcher().catch(e => console.error('[api] sl/tp watcher start error', e
 // (Removed old simple liquidation loop) strict liquidation enforced in snapshot loop below.
 
 // Close an open order: realize PnL into balance and mark as closed
-app.post('/api/v1/orders/:id/close', async (req, res) => {
+app.post('/api/v1/orders/:id/close', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    await initDemo();
+    if (!req.userId) return res.status(401).json({ error: 'Unauthorized' });
+    
     const id = String(req.params.id || '');
     if (!id) return res.status(400).json({ error: 'missing_id' });
 
-    // Load all orders
-    const orders = await listOrders<any>();
-    const idx = orders.findIndex((o: any) => String(o?.id) === id);
-    if (idx < 0) return res.status(404).json({ error: 'order_not_found' });
-    const o = orders[idx];
-    if (String(o.status ?? 'open') !== 'open') return res.status(409).json({ error: 'not_open' });
+    // Load user's orders
+    const orders = await getUserOrders(req.userId);
+    const order = orders.find(o => o.id === id);
+    if (!order) return res.status(404).json({ error: 'order_not_found' });
+    if (order.status !== 'OPEN') return res.status(409).json({ error: 'not_open' });
 
-    const symbol = ensureUsdt(String(o.symbol || o.asset || 'BTCUSDT'));
-    const entry = Number(o.entry);
-    const volume = Number(o.volume);
-    const side = String(o.side || '').toUpperCase();
-    if (!Number.isFinite(entry) || !Number.isFinite(volume)) return res.status(400).json({ error: 'invalid_order_values' });
+    const symbol = order.symbol;
+    const entry = order.entry;
+    const volume = order.volume;
+    const side = order.side;
 
     const last = await getLatestPriceForSymbol(symbol);
     if (!Number.isFinite(last as number)) return res.status(503).json({ error: 'price_unavailable', symbol });
@@ -502,15 +876,23 @@ app.post('/api/v1/orders/:id/close', async (req, res) => {
     const pnl = (side === 'BUY' ? ((last as number) - entry) : (entry - (last as number))) * volume;
 
     // Update balance: realize PnL
-    const bal = await getBalance();
-    await setBalance(bal + pnl);
+    const currentBalance = await getUserBalance(req.userId);
+    await updateUserBalance(req.userId, currentBalance + pnl);
 
-    // Mark order closed
-    const closedAt = new Date().toISOString();
-  const updated = { ...o, status: 'closed', exit: Number(last), pnl, closedAt, closedBy: 'manual' };
-  orders[idx] = updated;
-  const persisted = pruneClosedOrders(orders, 5);
-  await redis.set(KEY_ORDERS, JSON.stringify(persisted));
+    // Mark order closed in database
+    await updateUserOrder(req.userId, id, {
+      status: 'CLOSED',
+      closePrice: last,
+      realizedPnl: pnl,
+    });
+
+    const updated = {
+      ...order,
+      status: 'CLOSED',
+      closePrice: last,
+      realizedPnl: pnl,
+      closedAt: new Date().toISOString(),
+    };
 
     // Publish event
     try {
@@ -520,13 +902,33 @@ app.post('/api/v1/orders/:id/close', async (req, res) => {
       console.error('[api] publish order close error:', e);
     }
 
-    // Return new account snapshot and updated order
-    // Enforce after close for updated snapshot
-  const prices = await gatherPrices();
-  await checkLiquidations(redis, prices);
-  const snap = await computeSnapshot(redis, prices);
-  await redis.set(KEY_SNAPSHOT, JSON.stringify(snap));
-  return res.json({ ok: true, order: updated, account: snap });
+    // Return updated account info
+    const updatedBalance = await getUserBalance(req.userId);
+    const updatedOrders = await getUserOrders(req.userId);
+    let updatedMarginUsed = 0;
+    let updatedUnrealized = 0;
+    
+    for (const o of updatedOrders.filter(o => o.status === 'OPEN')) {
+      const currentPrice = await getLatestPriceForSymbol(o.symbol);
+      if (currentPrice) {
+        const isBuy = o.side === 'BUY';
+        const pnl = (isBuy ? (currentPrice - o.entry) : (o.entry - currentPrice)) * o.volume;
+        updatedUnrealized += pnl;
+        updatedMarginUsed += (o.entry * o.volume) / o.leverage;
+      }
+    }
+    
+    const updatedEquity = updatedBalance + updatedUnrealized;
+    const updatedFree = updatedEquity - updatedMarginUsed;
+    
+    const account = {
+      balance: Number(updatedBalance.toFixed(2)),
+      equity: Number(updatedEquity.toFixed(2)),
+      freeMargin: Number(updatedFree.toFixed(2)),
+      marginUsed: Number(updatedMarginUsed.toFixed(2)),
+    };
+
+    return res.json({ ok: true, order: updated, account });
   } catch (e) {
     console.error('[api] /api/v1/orders/:id/close error:', e);
     return res.status(500).json({ error: 'internal_error' });
